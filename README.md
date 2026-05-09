@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go" width="260" />
+  <img src="birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi" width="260" />
 </p>
 
-# ESP32 RTSP Mic for BirdNET-Go
+# birdnet-esp32-rtsp-mic
 
 ESP32-C6 + I2S MEMS microphone streamer that exposes a **mono 16-bit PCM** audio stream over
-**RTSP**, designed as a simple network mic for **BirdNET-Go**.
+**RTSP**, designed as a simple network mic for **BirdNET-Go / BirdNET-Pi**.
 
-- Latest firmware: **v1.7.0** (2026-04-29)
-- Target firmware: `esp32_rtsp_mic_birdnetgo` (Web UI + JSON API)
-- Changelog: `esp32_rtsp_mic_birdnetgo/CHANGELOG.md`
+- Latest firmware: **v1.8.0** (2026-05-08)
+- Target firmware: `esp32-birdnet-mic` (Web UI + JSON API)
+- Changelog: `esp32-birdnet-mic/CHANGELOG.md`
 - License: MIT (`LICENSE`)
 - One-click web flasher (recommended): **https://esp32mic.msmeteo.cz**
   (Chrome/Edge desktop, USB-C *data* cable)
@@ -21,8 +21,10 @@ ESP32-C6 + I2S MEMS microphone streamer that exposes a **mono 16-bit PCM** audio
 3. On first boot the device starts AP **ESP32-RTSP-Mic-AP** (open).
    Connect and finish Wi-Fi setup at `192.168.4.1` (captive portal).
 4. Open the Web UI: `http://<device-ip>/` (port **80**).
-5. RTSP stream (BirdNET-Go/VLC/ffplay):
-   `rtsp://<device-ip>:8554/audio` (or `rtsp://<device-hostname>.local:8554/audio` if mDNS is enabled).
+5. RTSP streams (BirdNET-Go / BirdNET-Pi / VLC / ffplay):
+   - `rtsp://<device-ip>:8554/audio` (primary stream, backward-compatible alias for stream 1)
+   - `rtsp://<device-ip>:8554/audio2` (second independent stream)
+   - mDNS variants: `rtsp://<device-hostname>.local:8554/audio` and `.../audio2` (when mDNS is enabled)
 
 ## Wiring (XIAO ESP32-C6 + ICS-43434 / INMP441)
 
@@ -40,12 +42,14 @@ INMP441 note:
 - INMP441 has also been reported to work without firmware changes when wired to the same I2S pins
   (`SCK` -> GPIO21, `WS` -> GPIO1, `SD` -> GPIO2). If your breakout exposes an `L/R` or `SEL`
   pin, set it to the left channel (typically GND), because the firmware reads the left I2S channel.
-  See GitHub discussion #25: https://github.com/Sukecz/birdnetgo-esp32-rtsp-mic/discussions/25
+  See GitHub discussion #25: https://github.com/Sukecz/esp32-birdnet-mic/discussions/25
 
 Tips:
 - Keep I2S wires short; for longer runs use shielded cable to reduce EMI.
-- Some XIAO ESP32-C6 revisions use an RF switch (GPIO3/GPIO14). If you use a different board or
-  internal antenna only, you may need to comment out the antenna GPIO block in `setup()`.
+- **XIAO ESP32-C6 antenna guidance (important):**
+  - XIAO ESP32-C6 uses an RF switch path (GPIO3/GPIO14), and Wi-Fi quality is critical for stable audio.
+  - For this board, external 2.4 GHz antenna is **strongly recommended** to avoid weak-signal retries and extra heating.
+  - Running without external antenna is possible, but you should comment out the antenna GPIO block in `setup()` if your hardware wiring/setup requires internal antenna mode.
 
 ## Test The RTSP Audio
 
@@ -55,9 +59,9 @@ Tips:
 - ffprobe:
   `ffprobe -rtsp_transport tcp rtsp://<device-ip>:8554/audio`
 
-If VLC/ffplay works, BirdNET-Go will typically work too (just use the same RTSP URL as your input).
+If VLC/ffplay works, use the same RTSP URL in BirdNET-Go or BirdNET-Pi.
 
-## Highlights (v1.6.0)
+## Highlights (v1.8.0)
 
 - Web UI (English) on port **80** with live status, logs, and controls
 - JSON API for automation
@@ -79,7 +83,15 @@ If VLC/ffplay works, BirdNET-Go will typically work too (just use the same RTSP 
 - Scheduled reset, CPU frequency control
 - Thermal protection with latch + acknowledge
 - High-pass filter (HPF) configurable (reduce rumble)
-- RTSP keep-alive (`GET_PARAMETER`), single client
+- RTSP keep-alive (`GET_PARAMETER`)
+- Two RTSP endpoints: primary `/audio` (alias for stream 1) and `/audio2`, each independently enable/disable
+- Auto-transport: TCP for BirdNET-Go, UDP for BirdNET-Pi (no manual selection)
+- Configurable max concurrent clients (default 2, options 1-3)
+- Per-stream live data: client count, streaming state, packet rate, last play time
+- Per-stream backend mapping in UI/API: BirdNET-Go or BirdNET-Pi
+- Unified Status card with system info + two stream columns (config + live data)
+- MQTT reconnect during streaming (120s interval, no longer blocked indefinitely)
+- Fixed mDNS hostname collision for boards from the same vendor (uses WiFi MAC instead of eFuse MAC)
 
 Web UI screenshot:
 
@@ -94,7 +106,7 @@ Web UI screenshot:
 | MEMS I2S microphone **INMP441** | 1 | Reported compatible with the same I2S wiring | - |
 | Shielded cable (6 core) | optional | Helps reduce EMI on mic runs | [AliExpress](https://www.aliexpress.com/item/1005002586286399.html) |
 | 220 V -> 5 V power supply | 1 | >= 1 A recommended for stability | [AliExpress](https://www.aliexpress.com/item/1005002624537795.html) |
-| 2.4 GHz antenna (IPEX/U.FL) | optional | If your board/revision uses external antenna | [AliExpress](https://www.aliexpress.com/item/1005008490414283.html) |
+| 2.4 GHz antenna (IPEX/U.FL) | recommended | Strongly recommended for XIAO ESP32-C6 (Wi-Fi stability + lower thermal stress) | [AliExpress](https://www.aliexpress.com/item/1005008490414283.html) |
 
 Notes:
 - Links are provided for convenience and may change over time. Always verify the exact part number
@@ -102,7 +114,7 @@ Notes:
 
 ## Tips & Best Practices
 
-- RTSP is **single-client** (only one connection at a time).
+- RTSP supports up to **2 concurrent sessions**.
 - Wi-Fi: aim for RSSI > -75 dBm; try buffer >= 512 for stability.
 - Multiple devices: each device uses a unique default mDNS/OTA hostname like `esp32mic-a1b2c3`.
 - Placement: keep the mic away from fans/EMI; shielded cable helps for longer runs.
@@ -143,7 +155,7 @@ the metal enclosure. Otherwise the box will also shield Wi-Fi and may make conne
 
 ## More Docs (Build, API, Internals)
 
-See `esp32_rtsp_mic_birdnetgo/README.md`.
+See `esp32-birdnet-mic/README.md`.
 
 ## License
 
