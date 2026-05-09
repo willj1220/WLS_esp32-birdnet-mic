@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.0 — 2026-05-09
+- Audio pipeline: I2S capture now runs in a dedicated FreeRTOS producer task.
+- Audio pipeline: processed PCM blocks are passed to the RTSP sender through a FreeRTOS ring buffer, reducing sensitivity to short Wi-Fi/client write stalls while keeping RTSP/RTP output unchanged.
+- RTSP: first PLAY after an idle period flushes stale queued audio before starting a fresh stream.
+- Diagnostics: `/api/audio_status` now exposes producer state, ring-buffer capacity, queued chunks, ring-buffer drops/flushes, I2S read errors, and RTSP write stall/timeout counters.
+- Reliability: restart/reset I2S now stops the producer task and deletes the ring buffer before reallocating audio buffers.
+
+
 ## 1.8.0 — 2026-05-08
 - RTSP: dual stream endpoints `/audio` (stream 1, legacy `/audio1` alias) and `/audio2`, each independently enable/disable.
 - RTSP: server internals migrated from single-client to configurable 1-3 concurrent sessions (default 2).

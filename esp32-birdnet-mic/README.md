@@ -8,7 +8,7 @@ Arduino firmware for an ESP32-C6 I2S microphone that serves **mono 16-bit PCM/L1
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.8.0** (2026-05-08)
+- Latest firmware: **v1.9.0** (2026-05-09)
 - Tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
 - User-facing overview and wiring: `../README.md`
@@ -29,7 +29,6 @@ RTSP streams:
 ```text
 rtsp://<device-ip>:8554/audio1    Stream 1
 rtsp://<device-ip>:8554/audio2    Stream 2
-rtsp://<device-ip>:8554/audio     Alias for /audio1, kept for older configs
 ```
 
 mDNS variants, if enabled and supported by your network:
@@ -37,7 +36,6 @@ mDNS variants, if enabled and supported by your network:
 ```text
 rtsp://<device-hostname>.local:8554/audio1
 rtsp://<device-hostname>.local:8554/audio2
-rtsp://<device-hostname>.local:8554/audio
 ```
 
 The API and Web UI publish `/audio1` and `/audio2`. Use `/audio1` in new configurations. `/audio`
@@ -53,18 +51,14 @@ remains available only as a compatibility alias for stream 1.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
-## What's New In v1.8.0
+## What's New In v1.9.0
 
-- Multi-session RTSP core with configurable **1-3 concurrent sessions**; default is 2.
-- Two documented stream paths: `/audio1` and `/audio2`; `/audio` aliases `/audio1`.
-- Per-stream enable/disable.
-- Per-stream target selection: BirdNET-Go or BirdNET-Pi.
-- Transport is selected from target: TCP for BirdNET-Go, UDP for BirdNET-Pi.
-- Per-stream live stats: client count, streaming state, packet rate, last play time.
-- `/api/status` exposes per-stream URLs, enable state, max clients, and live data.
-- Unified Web UI Status card with system info and both stream columns.
-- MQTT reconnect is allowed during streaming with a longer retry interval.
-- mDNS hostname generation now uses Wi-Fi MAC to avoid collisions on boards from the same vendor.
+- I2S capture now runs in a dedicated producer task.
+- Processed PCM blocks are queued through a FreeRTOS ring buffer before RTSP/RTP packet output.
+- RTSP remains the streaming protocol; the pipeline change isolates microphone capture from short Wi-Fi/client stalls.
+- `/api/audio_status` exposes producer/ring-buffer diagnostics: capacity, queued chunks, drops, flushes, and I2S errors.
+- `/api/audio_status` also exposes RTSP write stall and timeout counters.
+- First PLAY after an idle period flushes stale queued audio before starting a fresh stream.
 
 ## Hardware
 
@@ -118,6 +112,8 @@ The Web UI runs on port **80** and includes:
 - Status: IP, RSSI, uptime, heap, server state, stream states, packet rates.
 - Streams: URLs for `/audio1` and `/audio2`, enable/disable, max clients, BirdNET target.
 - Audio: sample rate, gain, buffer size, I2S shift, high-pass filter, signal level.
+- Audio API diagnostics: producer state, ring-buffer capacity/chunks/drops/flushes, I2S errors,
+  and RTSP write stalls/timeouts.
 - Time & Network: NTP state, time offset, mDNS, stream schedule, optional deep sleep, Wi-Fi actions.
 - Reliability: auto-recovery, threshold mode, check interval, scheduled reset.
 - Thermal: current/peak temperature, shutdown limit, protection latch, acknowledgement.
@@ -238,6 +234,19 @@ s2_pkt_rate
 max_clients
 ```
 
+`/api/audio_status` includes audio pipeline diagnostics:
+
+```text
+producer_running
+i2s_error_count
+rb_capacity_bytes
+rb_chunks
+rb_drops
+rb_flushes
+rtsp_write_stalls
+rtsp_write_timeouts
+```
+
 ## MQTT And Home Assistant
 
 MQTT settings are available in the Web UI and API.
@@ -326,6 +335,8 @@ Apply changes through Web UI or API. Audio-related updates call `restartI2S()` w
 
 ## RTSP Implementation Notes
 
+- I2S capture and audio processing run in a producer task.
+- RTSP output consumes processed PCM blocks from a FreeRTOS ring buffer and packetizes them as RTP.
 - `DESCRIBE` returns SDP with `a=rtpmap:96 L16/<sample-rate>/1` and `a=control:track1`.
 - Stream selection is path-based: `/audio1` and `/audio` select stream 1; `/audio2` selects stream 2.
 - `SETUP` returns either `RTP/AVP/TCP;unicast;interleaved=0-1` or UDP ports, depending on target.

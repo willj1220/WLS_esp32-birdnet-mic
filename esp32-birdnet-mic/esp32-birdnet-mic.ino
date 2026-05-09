@@ -15,10 +15,13 @@
 #include <esp_sleep.h>
 #include <esp_system.h>
 #include <WiFiUdp.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/ringbuf.h"
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi) ==================
-#define FW_VERSION "1.8.0"
+#define FW_VERSION "1.9.0"
 // Expose FW version as a global C string for WebUI/API
 const char* FW_VERSION_STR = FW_VERSION;
 // Build timestamp for diagnostics (compile time)
@@ -159,6 +162,11 @@ unsigned long lastRTSPActivity = 0;
 int32_t* i2s_32bit_buffer = nullptr;
 int16_t* i2s_16bit_buffer = nullptr;
 int16_t* i2s_16bit_network_buffer = nullptr;
+RingbufHandle_t audioRingBuffer = nullptr;
+TaskHandle_t audioProducerTaskHandle = nullptr;
+volatile bool audioProducerStopRequested = false;
+volatile bool audioProducerRunning = false;
+size_t audioRingBufferCapacityBytes = 0;
 
 // -- Global state
 unsigned long audioPacketsSent = 0;
@@ -291,6 +299,12 @@ uint32_t rtspPlayCount = 0;
 uint32_t wifiReconnectCount = 0;
 uint32_t restartCounter = 0;
 String rebootReason = "unknown";
+uint32_t audioI2SErrorCount = 0;
+uint32_t audioRingBufferDropCount = 0;
+uint32_t audioRingBufferChunkCount = 0;
+uint32_t audioRingBufferFlushCount = 0;
+uint32_t rtspWriteStallCount = 0;
+uint32_t rtspWriteTimeoutCount = 0;
 
 // -- MQTT (Home Assistant discovery + telemetry)
 bool mqttEnabled = false;
@@ -2037,6 +2051,8 @@ void resetToDefaultSettings() {
 void restartI2S() {
     simplePrintln("Restarting I2S with new parameters...");
     stopAllRtspClients("I2S restart");
+    stopAudioProducer();
+    i2s_driver_uninstall(I2S_NUM_0);
 
     if (i2s_32bit_buffer) { free(i2s_32bit_buffer); i2s_32bit_buffer = nullptr; }
     if (i2s_16bit_buffer) { free(i2s_16bit_buffer); i2s_16bit_buffer = nullptr; }
@@ -2082,8 +2098,158 @@ void setupOTA() {
     ArduinoOTA.begin();
 }
 
+static bool hasActiveRtspStream() {
+    for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].streaming) return true;
+    }
+    return false;
+}
+
+static size_t computeAudioRingBufferCapacity() {
+    size_t chunkBytes = (size_t)currentBufferSize * sizeof(int16_t);
+    size_t chunkCount = 8;
+    if (currentBufferSize > 4096) chunkCount = 3;
+    else if (currentBufferSize > 2048) chunkCount = 4;
+    size_t capacity = chunkBytes * chunkCount;
+    if (capacity < 4096) capacity = 4096;
+    return capacity;
+}
+
+void flushAudioRingBuffer() {
+    if (!audioRingBuffer) return;
+    size_t itemSize = 0;
+    void* item = nullptr;
+    uint32_t flushed = 0;
+    while ((item = xRingbufferReceive(audioRingBuffer, &itemSize, 0)) != nullptr) {
+        vRingbufferReturnItem(audioRingBuffer, item);
+        flushed++;
+    }
+    if (flushed > 0) {
+        audioRingBufferFlushCount += flushed;
+    }
+}
+
+void audioProducerTask(void* /*arg*/) {
+    audioProducerRunning = true;
+
+    while (!audioProducerStopRequested) {
+        size_t bytesRead = 0;
+        esp_err_t result = i2s_read(I2S_NUM_0, i2s_32bit_buffer,
+                                    currentBufferSize * sizeof(int32_t),
+                                    &bytesRead, pdMS_TO_TICKS(100));
+        if (audioProducerStopRequested) break;
+
+        if (result != ESP_OK || bytesRead == 0) {
+            audioI2SErrorCount++;
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
+        }
+
+        int samplesRead = bytesRead / sizeof(int32_t);
+        if (samplesRead <= 0) continue;
+
+        // If HPF params changed dynamically, recompute in the producer context.
+        if (highpassEnabled && (hpfConfigSampleRate != currentSampleRate || hpfConfigCutoff != highpassCutoffHz)) {
+            updateHighpassCoeffs();
+        }
+
+        bool clipped = false;
+        float peakAbs = 0.0f;
+        for (int i = 0; i < samplesRead; i++) {
+            float sample = (float)(i2s_32bit_buffer[i] >> i2sShiftBits);
+            if (highpassEnabled) sample = hpf.process(sample);
+            float amplified = sample * currentGainFactor;
+            float aabs = fabsf(amplified);
+            if (aabs > peakAbs) peakAbs = aabs;
+            if (aabs > 32767.0f) clipped = true;
+            if (amplified > 32767.0f) amplified = 32767.0f;
+            if (amplified < -32768.0f) amplified = -32768.0f;
+            i2s_16bit_buffer[i] = (int16_t)amplified;
+        }
+
+        if (peakAbs > 32767.0f) peakAbs = 32767.0f;
+        lastPeakAbs16 = (uint16_t)peakAbs;
+        audioClippedLastBlock = clipped;
+        if (clipped) audioClipCount++;
+
+        if (lastPeakAbs16 > peakHoldAbs16) {
+            peakHoldAbs16 = lastPeakAbs16;
+            peakHoldUntilMs = millis() + 3000UL;
+        } else if (peakHoldAbs16 > 0 && millis() > peakHoldUntilMs) {
+            peakHoldAbs16 = 0;
+        }
+
+        if (!audioRingBuffer || !hasActiveRtspStream()) {
+            continue;
+        }
+
+        size_t payloadBytes = (size_t)samplesRead * sizeof(int16_t);
+        if (xRingbufferSend(audioRingBuffer, i2s_16bit_buffer, payloadBytes, 0) == pdTRUE) {
+            audioRingBufferChunkCount++;
+        } else {
+            audioRingBufferDropCount++;
+        }
+    }
+
+    audioProducerRunning = false;
+    audioProducerTaskHandle = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void stopAudioProducer() {
+    audioProducerStopRequested = true;
+    unsigned long startMs = millis();
+    while (audioProducerTaskHandle != nullptr && (millis() - startMs) < 600UL) {
+        delay(5);
+    }
+    if (audioProducerTaskHandle != nullptr) {
+        vTaskDelete(audioProducerTaskHandle);
+        audioProducerTaskHandle = nullptr;
+        audioProducerRunning = false;
+    }
+    if (audioRingBuffer) {
+        vRingbufferDelete(audioRingBuffer);
+        audioRingBuffer = nullptr;
+    }
+    audioRingBufferCapacityBytes = 0;
+    audioProducerStopRequested = false;
+}
+
+bool startAudioProducer() {
+    stopAudioProducer();
+
+    audioRingBufferCapacityBytes = computeAudioRingBufferCapacity();
+    audioRingBuffer = xRingbufferCreate(audioRingBufferCapacityBytes, RINGBUF_TYPE_BYTEBUF);
+    if (!audioRingBuffer) {
+        simplePrintln("Audio RB alloc failed");
+        audioRingBufferCapacityBytes = 0;
+        return false;
+    }
+
+    audioProducerStopRequested = false;
+    BaseType_t rc = xTaskCreate(
+        audioProducerTask,
+        "audio_prod",
+        6144,
+        nullptr,
+        5,
+        &audioProducerTaskHandle
+    );
+    if (rc != pdPASS) {
+        simplePrintln("Audio producer failed");
+        vRingbufferDelete(audioRingBuffer);
+        audioRingBuffer = nullptr;
+        audioRingBufferCapacityBytes = 0;
+        return false;
+    }
+
+    simplePrintln("Audio producer started");
+    return true;
+}
+
 // I2S setup
 bool setup_i2s_driver() {
+    stopAudioProducer();
     i2s_driver_uninstall(I2S_NUM_0);
 
     uint16_t dma_buf_len = (currentBufferSize > 512) ? 512 : currentBufferSize;
@@ -2121,6 +2287,10 @@ bool setup_i2s_driver() {
     simplePrintln("I2S ready: " + String(currentSampleRate) + "Hz, gain " +
                   String(currentGainFactor, 1) + ", buffer " + String(currentBufferSize) +
                   ", shiftBits " + String(i2sShiftBits));
+    if (!startAudioProducer()) {
+        i2s_driver_uninstall(I2S_NUM_0);
+        return false;
+    }
     return true;
 }
 
@@ -2148,7 +2318,9 @@ static bool writeAll(WiFiClient &client, const uint8_t* data, size_t len) {
             continue;
         }
 
+        rtspWriteStallCount++;
         if ((millis() - startMs) > RTSP_WRITE_TIMEOUT_MS || retries >= RTSP_WRITE_RETRY_MAX) {
+            rtspWriteTimeoutCount++;
             return false;
         }
         retries++;
@@ -2238,49 +2410,20 @@ void streamAudio() {
         if (clients[i].streaming) { anyStreaming = true; break; }
     }
     if (!anyStreaming) return;
+    if (!audioRingBuffer) return;
 
-    size_t bytesRead = 0;
-    esp_err_t result = i2s_read(I2S_NUM_0, i2s_32bit_buffer,
-                                currentBufferSize * sizeof(int32_t),
-                                &bytesRead, 50 / portTICK_PERIOD_MS);
+    uint8_t chunksProcessed = 0;
+    while (chunksProcessed < 4) {
+        size_t itemSize = 0;
+        int16_t* audioChunk = (int16_t*)xRingbufferReceive(audioRingBuffer, &itemSize, 0);
+        if (!audioChunk) break;
 
-    if (result == ESP_OK && bytesRead > 0) {
-        int samplesRead = bytesRead / sizeof(int32_t);
+        int samplesRead = itemSize / sizeof(int16_t);
+        if (samplesRead > currentBufferSize) samplesRead = currentBufferSize;
 
-        // If HPF params changed dynamically, recompute
-        if (highpassEnabled && (hpfConfigSampleRate != currentSampleRate || hpfConfigCutoff != highpassCutoffHz)) {
-            updateHighpassCoeffs();
-        }
-
-        bool clipped = false;
-        float peakAbs = 0.0f;
-        for (int i = 0; i < samplesRead; i++) {
-            float sample = (float)(i2s_32bit_buffer[i] >> i2sShiftBits);
-            if (highpassEnabled) sample = hpf.process(sample);
-            float amplified = sample * currentGainFactor;
-            float aabs = fabsf(amplified);
-            if (aabs > peakAbs) peakAbs = aabs;
-            if (aabs > 32767.0f) clipped = true;
-            if (amplified > 32767.0f) amplified = 32767.0f;
-            if (amplified < -32768.0f) amplified = -32768.0f;
-            i2s_16bit_buffer[i] = (int16_t)amplified;
-        }
-        // Update metering after processing the block
-        if (peakAbs > 32767.0f) peakAbs = 32767.0f;
-        lastPeakAbs16 = (uint16_t)peakAbs;
-        audioClippedLastBlock = clipped;
-        if (clipped) audioClipCount++;
-
-        // Update peak hold for a short window (~3 s) to match UI polling cadence
-        if (lastPeakAbs16 > peakHoldAbs16) {
-            peakHoldAbs16 = lastPeakAbs16;
-            peakHoldUntilMs = millis() + 3000UL;
-        } else if (peakHoldAbs16 > 0 && millis() > peakHoldUntilMs) {
-            peakHoldAbs16 = 0;
-        }
         // Prepare one network-order copy and reuse for all active client sessions.
         for (int i = 0; i < samplesRead; ++i) {
-            uint16_t s = (uint16_t)i2s_16bit_buffer[i];
+            uint16_t s = (uint16_t)audioChunk[i];
             s = (uint16_t)((s << 8) | (s >> 8));
             i2s_16bit_network_buffer[i] = (int16_t)s;
         }
@@ -2302,6 +2445,8 @@ void streamAudio() {
         if (deliveredAny) {
             audioPacketsSent++;
         }
+        vRingbufferReturnItem(audioRingBuffer, (void*)audioChunk);
+        chunksProcessed++;
     }
 }
 
@@ -2422,6 +2567,9 @@ void handleRTSPCommand(ClientSession &session, String request, uint8_t clientIdx
 
         bool wasAnyStreaming = anyRtspSessionStreaming();
         bool wasProfileStreaming = anyRtspSessionStreaming(session.profileIndex);
+        if (!wasAnyStreaming) {
+            flushAudioRingBuffer();
+        }
         session.streaming = true;
         session.rtpSequence = 0;
         session.rtpTimestamp = 0;
