@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.1 — 2026-05-15
+- Build size: added `build_opt.h` for the ESP32 Arduino build system to compile without unused C++
+  exception/unwind metadata.
+- XIAO ESP32-C6 default partition: verified `esp32:esp32:XIAO_ESP32C6` now builds at 1,244,584 bytes
+  of 1,310,720 bytes in `arduino-cli`, leaving about 66 KB reserve before Arduino IDE-specific
+  variation.
+- Scope: no firmware features were removed; RTSP streams, Web UI, API, MQTT/Home Assistant discovery,
+  OTA, diagnostics, schedules, deep sleep, and thermal protection remain enabled.
+- Web flasher: manifest version updated to 1.9.1 and `firmware.bin` regenerated from the current
+  merged Arduino build.
+
 ## 1.9.0 — 2026-05-09
 - Audio pipeline: I2S capture now runs in a dedicated FreeRTOS producer task.
 - Audio pipeline: processed PCM blocks are passed to the RTSP sender through a FreeRTOS ring buffer, reducing sensitivity to short Wi-Fi/client write stalls while keeping RTSP/RTP output unchanged.

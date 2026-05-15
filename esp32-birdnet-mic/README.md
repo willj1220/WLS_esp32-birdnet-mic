@@ -8,7 +8,7 @@ Arduino firmware for an ESP32-C6 I2S microphone that serves **mono 16-bit PCM/L1
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.9.0** (2026-05-09)
+- Latest firmware: **v1.9.1** (2026-05-15)
 - Tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
 - User-facing overview and wiring: `../README.md`
@@ -51,14 +51,14 @@ remains available only as a compatibility alias for stream 1.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
-## What's New In v1.9.0
+## What's New In v1.9.1
 
-- I2S capture now runs in a dedicated producer task.
-- Processed PCM blocks are queued through a FreeRTOS ring buffer before RTSP/RTP packet output.
-- RTSP remains the streaming protocol; the pipeline change isolates microphone capture from short Wi-Fi/client stalls.
-- `/api/audio_status` exposes producer/ring-buffer diagnostics: capacity, queued chunks, drops, flushes, and I2S errors.
-- `/api/audio_status` also exposes RTSP write stall and timeout counters.
-- First PLAY after an idle period flushes stale queued audio before starting a fresh stream.
+- Arduino IDE/XIAO ESP32-C6 build-size fix: added `build_opt.h`, automatically consumed by the
+  ESP32 Arduino core, to remove unused C++ exception/unwind metadata from the build.
+- Default `esp32:esp32:XIAO_ESP32C6` compile now leaves about 60 KB of app partition reserve instead
+  of sitting at the 1.2 MB limit.
+- No runtime features, endpoints, Web UI controls, RTSP streams, MQTT telemetry, OTA, or diagnostics
+  were removed.
 
 ## Hardware
 
@@ -272,6 +272,9 @@ MQTT password is stored in device flash in plain text NVS.
 2. Install an ESP32 Arduino core with ESP32-C6 support.
 3. Select *Seeed XIAO ESP32-C6* or *ESP32-C6 Dev Module*.
 4. Compile and upload over USB.
+
+The sketch folder contains `build_opt.h`. Keep it next to the `.ino`; Arduino IDE uses it
+automatically to keep the XIAO ESP32-C6 default 1.2 MB app partition below the size limit.
 
 ### arduino-cli
 
