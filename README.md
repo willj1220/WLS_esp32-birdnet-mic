@@ -7,9 +7,10 @@
 ESP32-C6 network microphone for **BirdNET-Go** and **BirdNET-Pi**. It reads an I2S MEMS microphone
 and serves mono **16-bit PCM/L16** audio over **RTSP**.
 
-- Latest firmware: **v1.9.1** (2026-05-15)
+- Latest firmware: **v1.9.2** (2026-05-16)
 - Target sketch: `esp32-birdnet-mic`
 - Web flasher: **https://esp32mic.msmeteo.cz** (Chrome/Edge desktop, USB-C data cable)
+- Manual OTA firmware: `manual-ota-firmware/firmware-app.bin`
 - Detailed firmware docs: `esp32-birdnet-mic/README.md`
 - Changelog: `esp32-birdnet-mic/CHANGELOG.md`
 - License: MIT (`LICENSE`)
@@ -38,6 +39,14 @@ rtsp://<device-hostname>.local:8554/audio
 ```
 
 The default hostname is unique per device, for example `esp32mic-a1b2c3`.
+
+Default build notes:
+
+- XIAO ESP32-C6 external antenna path is enabled by default.
+- OTA has no password in the default public build. Keep the device on your trusted LAN.
+- For OTA without USB, open **https://esp32mic.msmeteo.cz**, enter the device IP in the OTA section,
+  and open the device update page.
+- For manual OTA upload, use `manual-ota-firmware/firmware-app.bin` on the device update page.
 
 ## Wiring
 
@@ -154,7 +163,7 @@ The firmware includes a configurable high-pass filter to reduce low-frequency ru
 
 ## Arduino IDE Build Size
 
-Firmware v1.9.1 includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core loads
+Firmware v1.9.2 includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core loads
 automatically in Arduino IDE and `arduino-cli`. It disables unused C++ exception/unwind metadata and
 keeps the default XIAO ESP32-C6 partition scheme below the 1.2 MB app limit with about 60 KB reserve,
 without removing firmware features.
@@ -162,6 +171,7 @@ without removing firmware features.
 ## More Documentation
 
 - Firmware details, build instructions, API notes: `esp32-birdnet-mic/README.md`
+- Manual OTA firmware: `manual-ota-firmware/README.md`
 - Web flasher notes: `web-flasher/README.md`
 - Firmware changes: `esp32-birdnet-mic/CHANGELOG.md`
 
