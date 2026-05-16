@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.9.2 — 2026-05-16
+- Web UI: added `/ota` firmware update page.
+- OTA page: added automatic update from `http://esp32mic.msmeteo.cz/firmware-app.bin`.
+- OTA page: added manual upload for app-only `.bin` builds.
+- OTA note: automatic download intentionally uses plain HTTP because HTTPS/TLS does not fit in the
+  default XIAO ESP32-C6 app partition together with the existing features.
+- Web flasher: added OTA section where users enter the device IP and open the device update page.
+- Web flasher artifacts: version bumped to 1.9.2; `firmware.bin`, `firmware-app.bin`, and `ota-version.txt`
+  are generated for publishing.
+- Docs: simplified user instructions and documented that the default public build uses the external
+  XIAO ESP32-C6 antenna path and has no OTA password.
+
 ## 1.9.1 — 2026-05-15
 - Build size: added `build_opt.h` for the ESP32 Arduino build system to compile without unused C++
   exception/unwind metadata.

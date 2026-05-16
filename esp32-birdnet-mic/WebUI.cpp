@@ -4,6 +4,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <Update.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
 #include <ESPmDNS.h>
@@ -94,6 +96,9 @@ static const uint32_t OH_MAX = 95;
 static const uint32_t OH_STEP = 5;
 static const char* UI_MUTATION_HEADER = "X-ESP32MIC-CSRF";
 static const char* UI_MUTATION_TOKEN = "1";
+static const char* OTA_DEFAULT_URL = "http://esp32mic.msmeteo.cz/firmware-app.bin";
+static bool otaUploadOk = false;
+static String otaUploadError;
 
 // Helper functions in main
 extern float wifiPowerLevelToDbm(wifi_power_t lvl);
@@ -215,6 +220,216 @@ static void httpIndex() {
 }
 
 // HTTP handlery
+
+static String htmlEscape(const String &s) {
+    String o;
+    o.reserve(s.length() + 8);
+    for (size_t i = 0; i < s.length(); ++i) {
+        char c = s[i];
+        if (c == '&') o += F("&amp;");
+        else if (c == '<') o += F("&lt;");
+        else if (c == '>') o += F("&gt;");
+        else if (c == '"') o += F("&quot;");
+        else o += c;
+    }
+    return o;
+}
+
+static void sendOtaPage(const String &message = String(), bool ok = true) {
+    String deviceUrl = "http://" + WiFi.localIP().toString() + "/ota";
+    String html;
+    html.reserve(5200);
+    html += F("<!doctype html><html><head><meta charset='utf-8'>");
+    html += F("<meta name='viewport' content='width=device-width,initial-scale=1'>");
+    html += F("<title>Firmware update</title><style>");
+    html += F(":root{--bg:#f6f7fb;--fg:#0f172a;--muted:#526079;--card:#fff;--border:#d7dee9;--acc:#0ea5e9;--ok:#10b981;--bad:#ef4444}");
+    html += F("@media(prefers-color-scheme:dark){:root{--bg:#07101f;--fg:#e8eefc;--muted:#a7b3cb;--card:#111a2c;--border:#26344f}}");
+    html += F("*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 600px at 10% -10%,rgba(14,165,233,.18),transparent),var(--bg);color:var(--fg);font-family:system-ui,-apple-system,Segoe UI,sans-serif}.wrap{max-width:760px;margin:0 auto;padding:24px 14px}.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px;margin:0 0 14px;box-shadow:0 12px 34px rgba(0,0,0,.10)}h1{font-size:26px;margin:0 0 8px}.muted{color:var(--muted);line-height:1.45}.msg{border-radius:12px;padding:12px 14px;margin:0 0 14px;border:1px solid var(--border)}.ok{color:var(--ok)}.bad{color:var(--bad)}input{width:100%;padding:11px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--fg);font:inherit;margin:8px 0 12px}button,a.btn{display:inline-block;border:1px solid var(--border);background:linear-gradient(120deg,var(--acc),#f59e0b);color:#082f49;border-radius:12px;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer}button.secondary,a.secondary{background:transparent;color:var(--fg)}code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all}</style></head><body><div class='wrap'>");
+    html += F("<div class='card'><h1>Firmware update</h1><p class='muted'>Device: <code>");
+    html += htmlEscape(deviceUrl);
+    html += F("</code><br>Current firmware: <strong>v");
+    html += htmlEscape(String(FW_VERSION_STR));
+    html += F("</strong></p><p><a class='btn secondary' href='/'>Back to Web UI</a></p></div>");
+    if (message.length()) {
+        html += F("<div class='msg ");
+        html += ok ? F("ok") : F("bad");
+        html += F("'>");
+        html += htmlEscape(message);
+        html += F("</div>");
+    }
+    html += F("<div class='card'><h2>Automatic update</h2><p class='muted'>Use this when the device has internet access. It downloads the latest app build from the project web flasher page and installs it automatically.</p>");
+    html += F("<form method='post' action='/ota/install' onsubmit=\"return confirm('Install firmware update now? The stream will stop and the device will reboot.');\">");
+    html += F("<label>Firmware URL</label><input name='url' value='");
+    html += htmlEscape(String(OTA_DEFAULT_URL));
+    html += F("'><button type='submit'>Download and install latest firmware</button></form></div>");
+    html += F("<div class='card'><h2>Upload compiled file</h2><p class='muted'>Use this when the device has no internet access. Select the app-only file <code>firmware-app.bin</code> or <code>esp32-birdnet-mic.ino.bin</code>. Do not upload the USB <code>firmware.bin</code> merged image here.</p>");
+    html += F("<form method='post' action='/ota/upload' enctype='multipart/form-data' onsubmit=\"return confirm('Upload and install selected firmware now?');\">");
+    html += F("<input type='file' name='firmware' accept='.bin,application/octet-stream' required><button type='submit'>Upload and install file</button></form></div>");
+    html += F("</div></body></html>");
+    web.sendHeader("Cache-Control", "no-store");
+    web.send(200, "text/html; charset=utf-8", html);
+}
+
+static bool isSafeOtaUrl(const String &url) {
+    if (url.length() < 12 || url.length() > 220) return false;
+    if (!url.startsWith("http://")) return false;
+    if (url.indexOf(' ') >= 0 || url.indexOf('\r') >= 0 || url.indexOf('\n') >= 0) return false;
+    return true;
+}
+
+static bool streamUpdate(Stream &stream, int contentLength, String &errorOut) {
+    if (!Update.begin(contentLength > 0 ? (size_t)contentLength : UPDATE_SIZE_UNKNOWN)) {
+        errorOut = String("Update begin failed: ") + Update.errorString();
+        return false;
+    }
+
+    uint8_t buffer[1024];
+    size_t writtenTotal = 0;
+    int remaining = contentLength;
+    unsigned long lastDataMs = millis();
+
+    while (remaining > 0 || contentLength < 0) {
+        size_t available = stream.available();
+        if (available == 0) {
+            if (millis() - lastDataMs > 15000) {
+                errorOut = F("Update download timed out.");
+                Update.abort();
+                return false;
+            }
+            delay(1);
+            continue;
+        }
+        lastDataMs = millis();
+        size_t toRead = available;
+        if (toRead > sizeof(buffer)) toRead = sizeof(buffer);
+        if (remaining > 0 && toRead > (size_t)remaining) toRead = (size_t)remaining;
+        int readLen = stream.readBytes(buffer, toRead);
+        if (readLen <= 0) continue;
+        size_t written = Update.write(buffer, (size_t)readLen);
+        if (written != (size_t)readLen) {
+            errorOut = String("Flash write failed: ") + Update.errorString();
+            Update.abort();
+            return false;
+        }
+        writtenTotal += written;
+        if (remaining > 0) remaining -= readLen;
+        yield();
+    }
+
+    if (writtenTotal == 0) {
+        errorOut = F("No firmware data received.");
+        Update.abort();
+        return false;
+    }
+    if (!Update.end(true)) {
+        errorOut = String("Update end failed: ") + Update.errorString();
+        return false;
+    }
+    if (!Update.isFinished()) {
+        errorOut = F("Update was not fully written.");
+        return false;
+    }
+    return true;
+}
+
+static bool installOtaFromUrl(const String &url, String &errorOut) {
+    if (!isSafeOtaUrl(url)) {
+        errorOut = F("Only http:// firmware URLs are supported.");
+        return false;
+    }
+
+    WiFiClient client;
+    HTTPClient http;
+    http.setTimeout(15000);
+    if (!http.begin(client, url)) {
+        errorOut = F("Could not open firmware URL.");
+        return false;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        errorOut = String("Firmware download failed, HTTP ") + String(code);
+        http.end();
+        return false;
+    }
+
+    int contentLength = http.getSize();
+    if (contentLength == 4194304) {
+        errorOut = F("This looks like the merged USB firmware.bin. OTA needs the app-only firmware-app.bin.");
+        http.end();
+        return false;
+    }
+
+    stopAllRtspClients("OTA update starting");
+    webui_pushLog(String("OTA pull update from ") + url);
+    bool ok = streamUpdate(*http.getStreamPtr(), contentLength, errorOut);
+    http.end();
+    return ok;
+}
+
+static void httpOtaPage() {
+    sendOtaPage();
+}
+
+static void httpOtaInstall() {
+    String url = web.hasArg("url") ? web.arg("url") : String(OTA_DEFAULT_URL);
+    url.trim();
+    String error;
+    bool ok = installOtaFromUrl(url, error);
+    if (ok) {
+        sendOtaPage(F("Firmware installed. Device will reboot now."), true);
+        scheduleReboot(false, 700);
+    } else {
+        webui_pushLog(String("OTA pull failed: ") + error);
+        sendOtaPage(String("Update failed: ") + error, false);
+    }
+}
+
+static void httpOtaUploadDone() {
+    if (otaUploadOk) {
+        sendOtaPage(F("Firmware uploaded and installed. Device will reboot now."), true);
+        scheduleReboot(false, 700);
+    } else {
+        sendOtaPage(String("Upload failed: ") + otaUploadError, false);
+    }
+}
+
+static void httpOtaUploadChunk() {
+    HTTPUpload &upload = web.upload();
+    if (upload.status == UPLOAD_FILE_START) {
+        otaUploadOk = false;
+        otaUploadError = "";
+        stopAllRtspClients("OTA upload starting");
+        webui_pushLog(String("OTA upload start: ") + upload.filename);
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            otaUploadError = String("Update begin failed: ") + Update.errorString();
+        }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+        if (otaUploadError.length() == 0) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                otaUploadError = String("Flash write failed: ") + Update.errorString();
+                Update.abort();
+            }
+        }
+    } else if (upload.status == UPLOAD_FILE_END) {
+        if (otaUploadError.length() == 0) {
+            if (upload.totalSize == 4194304) {
+                otaUploadError = F("This looks like the merged USB firmware.bin. OTA needs the app-only firmware-app.bin.");
+                Update.abort();
+            } else if (!Update.end(true)) {
+                otaUploadError = String("Update end failed: ") + Update.errorString();
+            } else if (!Update.isFinished()) {
+                otaUploadError = F("Update was not fully written.");
+            } else {
+                otaUploadOk = true;
+                webui_pushLog(String("OTA upload installed, bytes=") + String(upload.totalSize));
+            }
+        }
+    } else if (upload.status == UPLOAD_FILE_ABORTED) {
+        otaUploadError = F("Upload aborted.");
+        Update.abort();
+    }
+}
 
 static void httpStatus() {
     unsigned long uptimeSeconds = (millis() - bootTime) / 1000;
@@ -904,6 +1119,9 @@ static void httpActionFactoryReset(){
 
 void webui_begin() {
     web.on("/", httpIndex);
+    web.on("/ota", HTTP_GET, httpOtaPage);
+    web.on("/ota/install", HTTP_POST, httpOtaInstall);
+    web.on("/ota/upload", HTTP_POST, httpOtaUploadDone, httpOtaUploadChunk);
     web.on("/api/status", httpStatus);
     web.on("/api/audio_status", httpAudioStatus);
     web.on("/api/perf_status", httpPerfStatus);

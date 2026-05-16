@@ -8,12 +8,13 @@ Arduino firmware for an ESP32-C6 I2S microphone that serves **mono 16-bit PCM/L1
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.9.1** (2026-05-15)
+- Latest firmware: **v1.9.2** (2026-05-16)
 - Tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
 - User-facing overview and wiring: `../README.md`
 - Changelog: `CHANGELOG.md`
 - Web flasher: **https://esp32mic.msmeteo.cz**
+- Manual OTA firmware: `../manual-ota-firmware/firmware-app.bin`
 - License: MIT (`../LICENSE`)
 
 ## Important URLs
@@ -51,14 +52,14 @@ remains available only as a compatibility alias for stream 1.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
-## What's New In v1.9.1
+## What's New In v1.9.2
 
-- Arduino IDE/XIAO ESP32-C6 build-size fix: added `build_opt.h`, automatically consumed by the
-  ESP32 Arduino core, to remove unused C++ exception/unwind metadata from the build.
-- Default `esp32:esp32:XIAO_ESP32C6` compile now leaves about 60 KB of app partition reserve instead
-  of sitting at the 1.2 MB limit.
-- No runtime features, endpoints, Web UI controls, RTSP streams, MQTT telemetry, OTA, or diagnostics
-  were removed.
+- Web UI now has a **Firmware update** link.
+- The update page has two simple options:
+  - **Automatic update**: the device downloads the latest app build from `esp32mic.msmeteo.cz`.
+  - **Upload compiled file**: upload `firmware-app.bin` or `esp32-birdnet-mic.ino.bin` from your computer.
+- The public web flasher now has an OTA section: enter the device IP and open the update page.
+- Default public build: external antenna path ON, no OTA password.
 
 ## Hardware
 
@@ -104,6 +105,8 @@ block in `setup()`.
 - Max RTSP clients: 2
 - mDNS: ON
 - Time sync: ON
+- XIAO ESP32-C6 antenna path: external antenna ON
+- OTA password: none in the default public build
 
 ## Web UI
 
@@ -118,6 +121,28 @@ The Web UI runs on port **80** and includes:
 - Reliability: auto-recovery, threshold mode, check interval, scheduled reset.
 - Thermal: current/peak temperature, shutdown limit, protection latch, acknowledgement.
 - MQTT & Home Assistant: broker settings, publish interval, discovery republish.
+- Firmware update: open `/ota` or click **Firmware update** in the Web UI.
+
+## Firmware Update Without USB
+
+Open:
+
+```text
+http://<device-ip>/ota
+```
+
+You have two choices:
+
+1. **Automatic update**: use this when the device has internet access. The device downloads
+   `firmware-app.bin` from `esp32mic.msmeteo.cz` and installs it.
+2. **Upload compiled file**: use this when the device has no internet access. Upload the app-only
+   `.bin` file from your computer. The current release file is
+   `../manual-ota-firmware/firmware-app.bin`.
+
+Automatic update uses `http://esp32mic.msmeteo.cz/firmware-app.bin`. The server must allow this file
+over plain HTTP without redirecting it to HTTPS, because TLS support does not fit in the default
+XIAO ESP32-C6 app partition.
+
 - Logs: ring buffer view and download.
 - Actions: RTSP server ON/OFF, reset I2S, reconnect Wi-Fi, reboot, restore defaults.
 
@@ -360,7 +385,8 @@ Apply changes through Web UI or API. Audio-related updates call `restartI2S()` w
 
 - Keep the device on a trusted LAN.
 - Do not expose HTTP, RTSP, or OTA to the public internet.
-- Protect OTA with a password if enabled.
+- The default public build has no OTA password.
+- If you build your own firmware for untrusted networks, set an OTA password before publishing it.
 - Mutating API endpoints require `POST` and `X-ESP32MIC-CSRF: 1`, but read endpoints are not globally authenticated by default.
 
 ## Known Limitations
