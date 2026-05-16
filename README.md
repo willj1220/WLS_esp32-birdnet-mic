@@ -27,15 +27,13 @@ and serves mono **16-bit PCM/L16** audio over **RTSP**.
 ```text
 rtsp://<device-ip>:8554/audio1    Stream 1
 rtsp://<device-ip>:8554/audio2    Stream 2
-rtsp://<device-ip>:8554/audio     Alias for /audio1, kept for compatibility
 ```
 
-If mDNS is enabled and works on your LAN, the same paths are available through the device hostname:
+If mDNS is enabled and works on your LAN, the same streams are available through the device hostname:
 
 ```text
 rtsp://<device-hostname>.local:8554/audio1
 rtsp://<device-hostname>.local:8554/audio2
-rtsp://<device-hostname>.local:8554/audio
 ```
 
 The default hostname is unique per device, for example `esp32mic-a1b2c3`.
