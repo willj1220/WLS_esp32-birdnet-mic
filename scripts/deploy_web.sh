@@ -7,6 +7,7 @@ REMOTE_HOST="${REMOTE_HOST:-rpi5}"
 REMOTE_DIR="${REMOTE_DIR:-/home/msrpi/web-projects/web-flasher}"
 REMOTE="$REMOTE_HOST:$REMOTE_DIR/"
 PUBLIC_URL="${PUBLIC_URL:-https://esp32mic.msmeteo.cz}"
+PUBLIC_FW_URL="${PUBLIC_FW_URL:-http://esp32mic.msmeteo.cz/firmware-app.bin}"
 LOCAL_URL="${LOCAL_URL:-http://127.0.0.1:8083}"
 
 usage() {
@@ -20,6 +21,7 @@ Environment overrides:
   REMOTE_DIR   default: /home/msrpi/web-projects/web-flasher
   LOCAL_URL    default: http://127.0.0.1:8083
   PUBLIC_URL   default: https://esp32mic.msmeteo.cz
+  PUBLIC_FW_URL default: http://esp32mic.msmeteo.cz/firmware-app.bin
 EOF
 }
 
@@ -119,6 +121,13 @@ log "Verifying public endpoint"
 curl -fsS "$PUBLIC_URL/manifest.json" | python3 -m json.tool >/dev/null
 public_html="$(curl -fsS "$PUBLIC_URL/")"
 grep -q 'esp-web-install-button' <<<"$public_html"
-curl -fsSI "$PUBLIC_URL/firmware-app.bin" | grep -Eiq 'content-type: (application/octet-stream|application/macbinary|binary/octet-stream)'
+fw_headers="$(curl -fsSI "$PUBLIC_FW_URL" | tr -d '\r')"
+grep -Eiq '^content-type: (application/octet-stream|application/macbinary|binary/octet-stream)' <<<"$fw_headers"
+local_fw_size="$(stat -c '%s' "$WEB_DIR/firmware-app.bin")"
+public_fw_size="$(awk 'tolower($1)=="content-length:" {print $2; exit}' <<<"$fw_headers")"
+if [[ "$public_fw_size" != "$local_fw_size" ]]; then
+  echo "Public firmware size mismatch: got ${public_fw_size:-unknown}, expected $local_fw_size from $PUBLIC_FW_URL" >&2
+  exit 1
+fi
 
 echo "Deployed and verified $PUBLIC_URL"
