@@ -61,30 +61,13 @@ Nebo použij výstup z `idf.py build` / `arduino-esp32` pokud produkuje merged b
 Aktuální cesta webu na RPI je `/home/msrpi/web-projects/web-flasher`, nginx služba `esp32mic-web`
 ji servíruje jako statický web.
 
-Automatizované nasazení z MINIPC:
-
-```bash
-./scripts/deploy_web.sh
-```
-
-Skript ověří lokální artefakty, synchronizuje `web-flasher/` na RPI přes `rsync` a zkontroluje
-lokální i veřejnou URL. Pro statický nginx volume není potřeba restart Docker služby.
-
-Ruční postup:
-
 1. Ulož soubory `index.html`, `manifest.json`, `bootloader.bin`, `partitions.bin`, `boot_app0.bin`, `firmware.bin`, `firmware-app.bin` a `ota-version.txt` do `/home/msrpi/web-projects/web-flasher`.
 2. Ujisti se, že MIME typy pro `.json` a `.bin` jsou správně (`application/json`, `application/octet-stream`).
 3. Otevři stránku v Chrome/Edge (desktop), povol přístup k sériovému portu, klikni „Flash“.
 
 ### GitHub release
-Po commitu release změn lze pushnout větev, tag a GitHub release přes přihlášené `gh`:
-
-```bash
-./scripts/publish_release.sh
-```
-
-Verze se bere z `web-flasher/manifest.json`. Skript vytvoří nebo aktualizuje release `v<verze>` a
-nahraje flasher/OTA artefakty.
+Release lze spravovat z MINIPC přes přihlášené `gh`. Verze se bere z `web-flasher/manifest.json`;
+do release patří flasher/OTA artefakty z této složky.
 
 ### Poznámky
 - WebSerial funguje pouze na desktop Chromu/Edge (ne Safari, ne Firefox).
