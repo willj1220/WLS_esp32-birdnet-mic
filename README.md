@@ -1,17 +1,16 @@
 <p align="center">
-  <img src="birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi" width="260" />
+  <img src="assets/birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi" width="260" />
 </p>
 
 # birdnet-esp32-rtsp-mic
 
-ESP32-C6 network microphone for **BirdNET-Go** and **BirdNET-Pi**. It reads an I2S MEMS microphone
-and serves mono **16-bit PCM/L16** audio over **RTSP**.
+Seeed XIAO ESP32 network microphone for **BirdNET-Go** and **BirdNET-Pi**. It reads an I2S MEMS
+microphone and serves mono **16-bit PCM/L16** audio over **RTSP**.
 
-- Latest firmware: **v1.9.3** (2026-06-11)
-- Local development path on MINIPC: `/home/msminipc/Arduino/Birdnetmic`
+- Latest firmware: **v1.10.0** (2026-06-11)
 - Target sketch: `esp32-birdnet-mic`
 - Web flasher: **https://esp32mic.msmeteo.cz** (Chrome/Edge desktop, USB-C data cable)
-- Manual OTA firmware: `manual-ota-firmware/firmware-app.bin`
+- Manual OTA firmware: `manual-ota-firmware/firmware-app-<board>.bin` (`firmware-app.bin` remains the C6 alias)
 - Detailed firmware docs: `esp32-birdnet-mic/README.md`
 - Changelog: `esp32-birdnet-mic/CHANGELOG.md`
 - License: MIT (`LICENSE`)
@@ -39,41 +38,57 @@ rtsp://<device-hostname>.local:8554/audio2
 
 The default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
+Supported XIAO boards:
+
+- [Seeed Studio XIAO ESP32-C3](https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html)
+- [Seeed Studio XIAO ESP32-S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html)
+- [Seeed Studio XIAO ESP32-C5](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C5-p-6609.html)
+- [Seeed Studio XIAO ESP32-C6](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C6-p-5884.html)
+
 Default build notes:
 
-- XIAO ESP32-C6 external antenna path is enabled by default.
+- The web flasher detects the connected ESP chip family and selects the matching firmware.
+- XIAO ESP32-C6 external antenna RF switch is enabled by default.
+- XIAO ESP32-C3, XIAO ESP32-S3, and XIAO ESP32-C5 use their U.FL antenna path without firmware GPIO switching.
 - OTA has no password in the default public build. Keep the device on your trusted LAN.
 - For OTA without USB, open **https://esp32mic.msmeteo.cz**, enter the device IP in the OTA section,
   and open the device update page.
-- For manual OTA upload, use `manual-ota-firmware/firmware-app.bin` on the device update page.
+- For manual OTA upload, use the matching app-only file from `manual-ota-firmware/`.
 
 ## Wiring
 
-Tested hardware: **Seeed Studio XIAO ESP32-C6** + **ICS-43434** I2S microphone.
+Tested build targets: **Seeed Studio XIAO ESP32-C3/S3/C5/C6**. Runtime hardware validation is still
+primarily on **XIAO ESP32-C6** + **ICS-43434** I2S microphone.
 
-![Wiring / pinout](connection.png)
+![Wiring / pinout](assets/connection.png)
 
-| Mic signal | XIAO ESP32-C6 GPIO | Notes |
-|---|:--:|---|
-| **BCLK / SCK** | **21** | I2S bit clock |
-| **LRCLK / WS** | **1** | I2S word select |
-| **SD / DOUT** | **2** | I2S data from microphone |
-| **VDD** | 3V3 | Power |
-| **GND** | GND | Ground |
+Use the same physical XIAO pin labels on every supported board. The underlying GPIO numbers differ
+by chip.
+
+| Mic signal | XIAO pin label | C3 GPIO | S3 GPIO | C5 GPIO | C6 GPIO | Notes |
+|---|:--:|:--:|:--:|:--:|:--:|---|
+| **BCLK / SCK** | **D3** | 5 | 4 | 7 | 21 | I2S bit clock |
+| **LRCLK / WS** | **D1** | 3 | 2 | 0 | 1 | I2S word select |
+| **SD / DOUT** | **D2** | 4 | 3 | 25 | 2 | I2S data from microphone |
+| **VDD** | 3V3 | - | - | - | - | Power |
+| **GND** | GND | - | - | - | - | Ground |
 
 **INMP441** has also been reported to work with the same I2S pins. If your board exposes `L/R` or
 `SEL`, set it to the left channel, usually GND, because the firmware reads the left I2S channel.
 See discussion #25: https://github.com/Sukecz/esp32-birdnet-mic/discussions/25
 
-## XIAO ESP32-C6 Antenna
+## XIAO Antennas
 
 XIAO ESP32-C6 uses an RF switch path controlled by GPIO3/GPIO14. The firmware selects the external
 antenna path by default.
 
 - Use a 2.4 GHz external antenna for stable RTSP streaming.
+- XIAO ESP32-C3 and XIAO ESP32-S3 expose a U.FL antenna connector without a documented firmware GPIO
+  switch.
+- XIAO ESP32-C5 has a dedicated Wi-Fi/BT antenna connector; attach the included antenna before use.
 - Weak Wi-Fi can cause packet loss, retries, and extra heat.
 - If your hardware intentionally uses the internal antenna path, adjust or remove the GPIO3/GPIO14
-  antenna-control block in `setup()`.
+  antenna-control block in `setup()` for the C6 build.
 
 ## Test The Stream
 
@@ -109,19 +124,22 @@ If VLC/ffplay works, use the same RTSP URL in BirdNET-Go or BirdNET-Pi.
 
 Default audio settings are 48 kHz, mono 16-bit PCM/L16, gain 1.2, and a 512-sample packet buffer.
 The 512-sample default is the balanced profile and avoids the BirdNET-Pi UDP stutter observed with
-1024-sample packets, while still working well for BirdNET-Go TCP. Firmware v1.9.3 also improves
+1024-sample packets, while still working well for BirdNET-Go TCP. Firmware v1.9.3 and later improves
 BirdNET-Pi UDP compatibility by handling RTCP and RTP metadata expected by ffmpeg-based clients.
 
 ## Recommended Hardware
 
 | Part | Qty | Notes | Link |
 |---|---:|---|---|
-| Seeed Studio XIAO ESP32-C6 | 1 | Tested target board | [AliExpress](https://www.aliexpress.com/item/1005007341738903.html) |
+| Seeed Studio XIAO ESP32-C3 | 1 | Supported XIAO target board | [Seeed Studio](https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html) |
+| Seeed Studio XIAO ESP32-S3 | 1 | Supported XIAO target board | [Seeed Studio](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html) |
+| Seeed Studio XIAO ESP32-C5 | 1 | Supported XIAO target board | [Seeed Studio](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C5-p-6609.html) |
+| Seeed Studio XIAO ESP32-C6 | 1 | Supported XIAO target board | [Seeed Studio](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C6-p-5884.html) |
 | MEMS I2S microphone **ICS-43434** | 1 | Tested reference microphone | [AliExpress](https://www.aliexpress.com/item/1005008956861273.html) |
 | MEMS I2S microphone **INMP441** | 1 | Reported compatible with same wiring | - |
-| Shielded cable, 6 core | Optional | Helps on longer microphone runs | [AliExpress](https://www.aliexpress.com/item/1005002586286399.html) |
+| Shielded cable, 5+ core | Optional | I2S mic needs 5 conductors: 3V3, GND, BCLK, LRCLK/WS, and SD/DOUT. A 6-core cable is a good practical choice for spare/shield handling. | [AliExpress](https://www.aliexpress.com/item/1005010375728700.html) |
 | 5 V power supply | 1 | At least 1 A recommended | [AliExpress](https://www.aliexpress.com/item/1005002624537795.html) |
-| 2.4 GHz antenna, IPEX/U.FL | Recommended | Important for XIAO ESP32-C6 stability | [AliExpress](https://www.aliexpress.com/item/1005008490414283.html) |
+| 2.4 GHz antenna, IPEX/U.FL | Recommended | Important for stable XIAO Wi-Fi streaming | [AliExpress](https://www.aliexpress.com/item/1005005439361093.html) |
 
 Links are examples only. Verify the exact part number before buying.
 
@@ -160,17 +178,22 @@ The firmware includes a configurable high-pass filter to reduce low-frequency ru
 
 ## Compatibility
 
-- Target board: ESP32-C6, tested with Seeed Studio XIAO ESP32-C6.
+- Target boards: [Seeed Studio XIAO ESP32-C3](https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html),
+  [XIAO ESP32-S3](https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html),
+  [XIAO ESP32-C5](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C5-p-6609.html), and
+  [XIAO ESP32-C6](https://www.seeedstudio.com/Seeed-Studio-XIAO-ESP32C6-p-5884.html).
+- Web flasher auto-selects firmware by ESP chip family. It cannot distinguish board variants that
+  share the same chip family.
 - Reference microphone: ICS-43434.
 - Reported compatible microphone: INMP441 with the same I2S wiring.
 - Other ESP32 boards or I2S microphones may work, but may need pin or I2S format changes.
 
 ## Arduino IDE Build Size
 
-Firmware v1.9.2 and later includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core load
+Firmware v1.9.2 and later includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core loads
 automatically in Arduino IDE and `arduino-cli`. It disables unused C++ exception/unwind metadata and
-keeps the default XIAO ESP32-C6 partition scheme below the 1.2 MB app limit with about 39 KB reserve,
-without removing firmware features.
+keeps the tight XIAO ESP32-C3/C6 default 1.2 MB app partitions below the limit without removing
+firmware features.
 
 ## More Documentation
 

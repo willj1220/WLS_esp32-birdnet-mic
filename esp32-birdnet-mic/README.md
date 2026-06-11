@@ -1,21 +1,21 @@
 <p align="center">
-  <img src="../birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi" width="240" />
+  <img src="../assets/birdlogo.png" alt="ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi" width="240" />
 </p>
 
 # birdnet-esp32-rtsp-mic Firmware
 
-Arduino firmware for an ESP32-C6 I2S microphone that serves **mono 16-bit PCM/L16** audio over
+Arduino firmware for Seeed XIAO ESP32 I2S microphones that serve **mono 16-bit PCM/L16** audio over
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.9.3** (2026-06-11)
-- Local development path on MINIPC: `/home/msminipc/Arduino/Birdnetmic`
-- Tested board: Seeed Studio **XIAO ESP32-C6**
+- Latest firmware: **v1.10.0** (2026-06-11)
+- Build targets: Seeed Studio **XIAO ESP32-C3**, **XIAO ESP32-S3**, **XIAO ESP32-C5**, **XIAO ESP32-C6**
+- Runtime-tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
 - User-facing overview and wiring: `../README.md`
 - Changelog: `CHANGELOG.md`
 - Web flasher: **https://esp32mic.msmeteo.cz**
-- Manual OTA firmware: `../manual-ota-firmware/firmware-app.bin`
+- Manual OTA firmware: `../manual-ota-firmware/firmware-app-<board>.bin` (`firmware-app.bin` remains the C6 alias)
 - License: MIT (`../LICENSE`)
 
 ## Important URLs
@@ -53,6 +53,17 @@ remains available only as a compatibility alias for stream 1.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
+## What's New In v1.10.0
+
+- Added board profiles for Seeed Studio XIAO ESP32-C3, XIAO ESP32-S3, XIAO ESP32-C5, and XIAO ESP32-C6.
+- I2S wiring now uses the same physical XIAO pin labels on supported boards: `D3` for BCLK, `D1`
+  for LRCLK/WS, and `D2` for data.
+- XIAO ESP32-C6 keeps firmware-controlled external antenna selection through GPIO3/GPIO14.
+- XIAO ESP32-C3, XIAO ESP32-S3, and XIAO ESP32-C5 builds do not touch antenna-control GPIOs.
+- `/api/status`, MQTT device metadata, and the OTA page expose the compiled board profile.
+- Web flasher artifacts now include separate C3/S3/C5/C6 images and a manifest that lets ESP Web
+  Tools select firmware by connected chip family.
+
 ## What's New In v1.9.3
 
 - Default buffer is now **512 samples** after BirdNET-Pi UDP testing showed stutter with 1024-sample
@@ -70,20 +81,23 @@ Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
 ### I2S Wiring
 
-![Wiring / pinout](../connection.png)
+![Wiring / pinout](../assets/connection.png)
 
-| Mic signal | ESP32-C6 GPIO | Code define |
-|---:|:--:|---|
-| **BCLK / SCK** | **21** | `I2S_BCLK_PIN` |
-| **LRCLK / WS** | **1** | `I2S_LRCLK_PIN` |
-| **SD / DOUT** | **2** | `I2S_DOUT_PIN` |
-| **VDD** | 3V3 | Power |
-| **GND** | GND | Ground |
+Use the same physical XIAO pin labels on every supported board. The underlying GPIO numbers differ
+by chip.
+
+| Mic signal | XIAO pin label | C3 GPIO | S3 GPIO | C5 GPIO | C6 GPIO | Code define |
+|---:|:--:|:--:|:--:|:--:|:--:|---|
+| **BCLK / SCK** | **D3** | 5 | 4 | 7 | 21 | `I2S_BCLK_PIN` |
+| **LRCLK / WS** | **D1** | 3 | 2 | 0 | 1 | `I2S_LRCLK_PIN` |
+| **SD / DOUT** | **D2** | 4 | 3 | 25 | 2 | `I2S_DOUT_PIN` |
+| **VDD** | 3V3 | - | - | - | - | Power |
+| **GND** | GND | - | - | - | - | Ground |
 
 The firmware configures I2S as master/RX, reads the left channel, then shifts/scales samples to
 16-bit PCM. If using INMP441, set `L/R` or `SEL` to the left channel, usually GND.
 
-### XIAO ESP32-C6 Antenna Path
+### XIAO Antenna Paths
 
 The firmware selects the external antenna path on XIAO ESP32-C6:
 
@@ -93,8 +107,10 @@ GPIO14 -> HIGH
 ```
 
 Use an external 2.4 GHz antenna for reliable streaming. Weak Wi-Fi increases retries, heat, and the
-chance of audio dropouts. If your hardware uses the internal antenna path, adjust the GPIO3/GPIO14
-block in `setup()`.
+chance of audio dropouts. XIAO ESP32-C3 and XIAO ESP32-S3 expose a U.FL antenna connector without a
+documented firmware GPIO switch. XIAO ESP32-C5 has a dedicated Wi-Fi/BT antenna connector; attach
+the included antenna before use. If your C6 hardware uses the internal antenna path, adjust the
+GPIO3/GPIO14 block in `setup()`.
 
 ## Runtime Defaults
 
@@ -111,6 +127,7 @@ block in `setup()`.
 - mDNS: ON
 - Time sync: ON
 - XIAO ESP32-C6 antenna path: external antenna ON
+- XIAO ESP32-C3/S3/C5 antenna path: no firmware GPIO switching
 - OTA password: none in the default public build
 
 The sample-rate setting accepts 8,000-192,000 Hz. 192 kHz is allowed by the UI/API for users who
@@ -143,14 +160,16 @@ http://<device-ip>/ota
 You have two choices:
 
 1. **Automatic update**: use this when the device has internet access. The device downloads
-   `firmware-app.bin` from `esp32mic.msmeteo.cz` and installs it.
+   the board-specific app-only firmware from `esp32mic.msmeteo.cz` and installs it.
 2. **Upload compiled file**: use this when the device has no internet access. Upload the app-only
    `.bin` file from your computer. The current release file is
-   `../manual-ota-firmware/firmware-app.bin`.
+   the matching app-only file from `../manual-ota-firmware/`.
 
-Automatic update uses `http://esp32mic.msmeteo.cz/firmware-app.bin`. The server must allow this file
-over plain HTTP without redirecting it to HTTPS, because TLS support does not fit in the default
-XIAO ESP32-C6 app partition.
+Automatic update uses a board-specific plain HTTP URL with the firmware version in the filename, for
+example `http://esp32mic.msmeteo.cz/firmware-app-c3-1.10.0.bin`. The server must allow these files
+over plain HTTP without redirecting them to HTTPS, because TLS support does not fit in the tight
+XIAO ESP32-C3/C6 default app partitions. `firmware-app.bin` remains a C6 compatibility alias for
+older firmware.
 
 - Logs: ring buffer view and download.
 - Actions: RTSP server ON/OFF, reset I2S, reconnect Wi-Fi, reboot, restore defaults.
@@ -303,12 +322,13 @@ MQTT password is stored in device flash in plain text NVS.
 ### Arduino IDE
 
 1. Open `esp32-birdnet-mic/esp32-birdnet-mic.ino`.
-2. Install an ESP32 Arduino core with ESP32-C6 support.
-3. Select *Seeed XIAO ESP32-C6* or *ESP32-C6 Dev Module*.
+2. Install an ESP32 Arduino core with support for the selected XIAO target.
+3. Select the matching board, for example *XIAO_ESP32C3*, *XIAO_ESP32S3*, *XIAO_ESP32C5*, or
+   *XIAO_ESP32C6*.
 4. Compile and upload over USB.
 
 The sketch folder contains `build_opt.h`. Keep it next to the `.ino`; Arduino IDE uses it
-automatically to keep the XIAO ESP32-C6 default 1.2 MB app partition below the size limit.
+automatically to keep the tight XIAO ESP32-C3/C6 default 1.2 MB app partitions below the size limit.
 
 ### arduino-cli
 
@@ -320,12 +340,12 @@ arduino-cli upload -p <PORT> --fqbn <BOARD_FQBN> esp32-birdnet-mic
 From outside the repository, use the full sketch path:
 
 ```bash
-arduino-cli compile --fqbn <BOARD_FQBN> /home/msminipc/Arduino/Birdnetmic/esp32-birdnet-mic
+arduino-cli compile --fqbn <BOARD_FQBN> esp32-birdnet-mic
 ```
 
 ### PlatformIO
 
-Typical target is an ESP32-C6 Arduino environment, for example `env:xiao_esp32c6`:
+Typical targets are board-specific Arduino environments, for example `env:xiao_esp32c6`:
 
 ```bash
 pio run -t upload
@@ -409,7 +429,8 @@ Current validation ranges include `sampleRate=8000..192000` and `bufferSize=256.
 
 - No TLS or built-in user authentication for the Web UI/API.
 - mDNS depends on multicast support in your LAN and often does not work across VLANs, guest networks, or Docker bridge networks.
-- The firmware is primarily tested on Seeed Studio XIAO ESP32-C6 with ICS-43434.
+- The firmware is primarily runtime-tested on Seeed Studio XIAO ESP32-C6 with ICS-43434; C3/S3/C5
+  builds are compile-verified in Arduino ESP32 core 3.3.8.
 
 ## Credits
 

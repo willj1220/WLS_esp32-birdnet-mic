@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>birdnet-esp32-rtsp-mic | Web Flasher</title>
+  <link rel="icon" type="image/png" sizes="96x96" href="assets/favicon-96x96.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -182,10 +183,10 @@
 </head>
 <body>
   <div class="shell">
-    <img src="bird.png" alt="BirdNET Mic logo" class="logo">
+    <img src="assets/bird.png" alt="BirdNET Mic logo" class="logo">
     <p class="eyebrow">birdnet-esp32-rtsp-mic</p>
-    <h1>Flash your Seeed XIAO ESP32‑C6 in one click</h1>
-    <p class="lede">Plug the board via USB‑C, hit Flash, and let the browser handle everything. No drivers, no CLI.</p>
+    <h1>Flash your Seeed XIAO ESP32 board in one click</h1>
+    <p class="lede">Plug in a supported XIAO C3, S3, C5, or C6 via USB‑C, hit Flash, and let the browser pick the matching firmware automatically.</p>
 
     <div class="cta">
       <esp-web-install-button manifest="manifest.json"></esp-web-install-button>
@@ -193,6 +194,9 @@
     </div>
 
     <div class="chips">
+      <span class="chip">ESP32‑C3</span>
+      <span class="chip">ESP32‑S3</span>
+      <span class="chip">ESP32‑C5</span>
       <span class="chip">ESP32‑C6</span>
       <span class="chip">WebSerial</span>
       <span class="chip">One-click flash</span>
@@ -201,7 +205,7 @@
 
     <div class="grid">
       <div class="card"><strong>1) Connect</strong><br>USB‑C to your PC. If flashing fails, hold BOOT while plugging in.</div>
-      <div class="card"><strong>2) Flash</strong><br>Click Flash → pick the USB JTAG/serial device → for updates, keep existing data when asked.</div>
+      <div class="card"><strong>2) Flash</strong><br>Click Flash → pick the USB JTAG/serial device → ESP Web Tools detects the chip family and uses the matching firmware.</div>
       <div class="card"><strong>3) Done</strong><br>Board reboots with birdnet-esp32-rtsp-mic firmware.</div>
     </div>
 
@@ -214,12 +218,12 @@
     <div class="card ota-box">
       <strong>OTA update without USB</strong><br>
       If the device is already on Wi‑Fi, enter its IP address and open the OTA update page.
-      The device can either download the latest firmware from this web flasher automatically, or you can upload the app-only <code>firmware-app.bin</code> file manually.
+      The device can either download the matching latest firmware from this web flasher automatically, or you can upload the board-specific app-only file manually.
       <div class="ota-form">
         <input id="ota-ip" inputmode="numeric" autocomplete="off" placeholder="Device IP, e.g. 192.168.1.80">
         <button type="button" id="ota-open">Open OTA update</button>
       </div>
-      <div class="status-line" id="ota-status">Default build: external antenna enabled, no OTA password.</div>
+      <div class="status-line" id="ota-status">C6 build enables its external antenna RF switch; C3/S3/C5 use their U.FL antenna path without firmware GPIO switching. Default public builds have no OTA password.</div>
     </div>
 
     <div class="card footer-card">
@@ -230,7 +234,7 @@
     <p class="mini" style="margin-top:12px;text-align:center;">© <a href="https://github.com/Sukecz" target="_blank" rel="noreferrer">Sukecz</a></p>
   </div>
 
-  <script type="module" src="https://unpkg.com/esp-web-tools@10.2.1/dist/web/install-button.js?module"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools/dist/web/install-button.js?module"></script>
   <script>
     (async function loadFirmwareVersion() {
       const chip = document.getElementById("fw-version-chip");
@@ -269,8 +273,8 @@
 NOTE: For offline/local hosting we optionally bundle the install-button code below (commented). Remove the external script tag above and uncomment this block if a CDN is blocked.
 
 <script type="module">
-import { defineCustomElements } from 'https://unpkg.com/esp-web-tools@11/dist/loader/index.esm.js';
-import { installButton } from 'https://unpkg.com/esp-web-tools@11/dist/web/install-button.js';
+import { defineCustomElements } from 'https://unpkg.com/esp-web-tools/dist/loader/index.esm.js';
+import { installButton } from 'https://unpkg.com/esp-web-tools/dist/web/install-button.js';
 // register custom elements
 defineCustomElements();
 </script>

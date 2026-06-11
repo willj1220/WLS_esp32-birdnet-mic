@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.10.0 — 2026-06-11
+- Board support: added compile-time profiles for Seeed Studio XIAO ESP32-C3, XIAO ESP32-S3,
+  XIAO ESP32-C5, and XIAO ESP32-C6.
+- I2S wiring: switched the default microphone pins to XIAO physical labels `D3`/`D1`/`D2`, keeping
+  the same physical wiring across supported XIAO boards while allowing each Arduino variant to map
+  to its own GPIO numbers.
+- Antenna handling: kept GPIO3/GPIO14 external antenna RF-switch control only for XIAO ESP32-C6.
+  C3/S3/C5 builds do not drive antenna-control GPIOs.
+- Metadata: `/api/status`, MQTT device metadata, and the OTA page now expose board id, board name,
+  and chip family.
+- OTA: automatic update URL is selected by compiled board profile; `firmware-app.bin` remains the
+  compatibility alias for the XIAO ESP32-C6 app image.
+- Web flasher: manifest now contains separate ESP32-C3, ESP32-S3, ESP32-C5, and ESP32-C6 builds so
+  ESP Web Tools can auto-select firmware by connected chip family.
+- Web flasher artifacts: generated `firmware-app-*.bin`, `firmware-*.bin`, `bootloader-*.bin`,
+  `partitions-*.bin`, and `boot_app0-*.bin` for C3/S3/C5/C6.
+- Validation: compile-verified with Arduino ESP32 core 3.3.8 on
+  `esp32:esp32:XIAO_ESP32C3`, `esp32:esp32:XIAO_ESP32S3`, `esp32:esp32:XIAO_ESP32C5`, and
+  `esp32:esp32:XIAO_ESP32C6`. Runtime hardware validation remains primarily on XIAO ESP32-C6.
+
 ## 1.9.3 — 2026-06-11
 - Defaults: changed the packet buffer default from 1024 to 512 samples after BirdNET-Pi UDP testing
   showed stutter with 1024-sample packets.
@@ -17,8 +37,7 @@
   correctly after polling or a successful save, and failed saves remain marked as unsaved.
 - Web flasher artifacts: version bumped to 1.9.3; `firmware.bin`, `firmware-app.bin`, and
   `ota-version.txt` are regenerated for publishing.
-- Docs: documented the current MINIPC project path `/home/msminipc/Arduino/Birdnetmic` and refreshed
-  default audio settings.
+- Docs: refreshed default audio settings and public firmware artifact notes.
 
 ## 1.9.2 — 2026-05-16
 - Web UI: added `/ota` firmware update page.

@@ -96,7 +96,6 @@ static const uint32_t OH_MAX = 95;
 static const uint32_t OH_STEP = 5;
 static const char* UI_MUTATION_HEADER = "X-ESP32MIC-CSRF";
 static const char* UI_MUTATION_TOKEN = "1";
-static const char* OTA_DEFAULT_URL = "http://esp32mic.msmeteo.cz/firmware-app.bin";
 static bool otaUploadOk = false;
 static String otaUploadError;
 
@@ -108,6 +107,9 @@ extern bool restartI2S();
 extern void saveAudioSettings();
 extern void applyWifiTxPower(bool log);
 extern const char* FW_VERSION_STR;
+extern const char* FW_BOARD_ID_STR;
+extern const char* FW_BOARD_NAME_STR;
+extern const char* FW_CHIP_FAMILY_STR;
 extern bool timeSynced;
 extern unsigned long lastTimeSyncSuccess;
 extern int32_t timeOffsetMinutes;
@@ -128,6 +130,23 @@ extern String mqttPassword;
 extern String mqttTopicPrefix;
 extern String mqttDiscoveryPrefix;
 extern String mqttClientId;
+
+static String getDefaultOtaUrl() {
+    String boardId = String(FW_BOARD_ID_STR);
+    if (boardId == "xiao-esp32c3") {
+        return F("http://esp32mic.msmeteo.cz/firmware-app-c3-1.10.0.bin");
+    }
+    if (boardId == "xiao-esp32s3") {
+        return F("http://esp32mic.msmeteo.cz/firmware-app-s3-1.10.0.bin");
+    }
+    if (boardId == "xiao-esp32c5") {
+        return F("http://esp32mic.msmeteo.cz/firmware-app-c5-1.10.0.bin");
+    }
+    if (boardId == "xiao-esp32c6") {
+        return F("http://esp32mic.msmeteo.cz/firmware-app-c6-1.10.0.bin");
+    }
+    return F("http://esp32mic.msmeteo.cz/firmware-app.bin");
+}
 extern uint16_t mqttPublishIntervalSec;
 extern bool mqttConnected;
 extern String mqttLastError;
@@ -237,6 +256,7 @@ static String htmlEscape(const String &s) {
 
 static void sendOtaPage(const String &message = String(), bool ok = true) {
     String deviceUrl = "http://" + WiFi.localIP().toString() + "/ota";
+    String defaultOtaUrl = getDefaultOtaUrl();
     String html;
     html.reserve(5200);
     html += F("<!doctype html><html><head><meta charset='utf-8'>");
@@ -249,7 +269,11 @@ static void sendOtaPage(const String &message = String(), bool ok = true) {
     html += htmlEscape(deviceUrl);
     html += F("</code><br>Current firmware: <strong>v");
     html += htmlEscape(String(FW_VERSION_STR));
-    html += F("</strong></p><p><a class='btn secondary' href='/'>Back to Web UI</a></p></div>");
+    html += F("</strong><br>Board: <strong>");
+    html += htmlEscape(String(FW_BOARD_NAME_STR));
+    html += F("</strong> / ");
+    html += htmlEscape(String(FW_CHIP_FAMILY_STR));
+    html += F("</p><p><a class='btn secondary' href='/'>Back to Web UI</a></p></div>");
     if (message.length()) {
         html += F("<div class='msg ");
         html += ok ? F("ok") : F("bad");
@@ -260,9 +284,9 @@ static void sendOtaPage(const String &message = String(), bool ok = true) {
     html += F("<div class='card'><h2>Automatic update</h2><p class='muted'>Use this when the device has internet access. It downloads the latest app build from the project web flasher page and installs it automatically.</p>");
     html += F("<form method='post' action='/ota/install' onsubmit=\"return confirm('Install firmware update now? The stream will stop and the device will reboot.');\">");
     html += F("<label>Firmware URL</label><input name='url' value='");
-    html += htmlEscape(String(OTA_DEFAULT_URL));
+    html += htmlEscape(defaultOtaUrl);
     html += F("'><button type='submit'>Download and install latest firmware</button></form></div>");
-    html += F("<div class='card'><h2>Upload compiled file</h2><p class='muted'>Use this when the device has no internet access. Select the app-only file <code>firmware-app.bin</code> or <code>esp32-birdnet-mic.ino.bin</code>. Do not upload the USB <code>firmware.bin</code> merged image here.</p>");
+    html += F("<div class='card'><h2>Upload compiled file</h2><p class='muted'>Use this when the device has no internet access. Select the matching app-only file such as <code>firmware-app-c3.bin</code>, <code>firmware-app-s3.bin</code>, <code>firmware-app-c5.bin</code>, or <code>firmware-app-c6.bin</code>. Do not upload the USB <code>firmware.bin</code> merged image here.</p>");
     html += F("<form method='post' action='/ota/upload' enctype='multipart/form-data' onsubmit=\"return confirm('Upload and install selected firmware now?');\">");
     html += F("<input type='file' name='firmware' accept='.bin,application/octet-stream' required><button type='submit'>Upload and install file</button></form></div>");
     html += F("</div></body></html>");
@@ -355,7 +379,7 @@ static bool installOtaFromUrl(const String &url, String &errorOut) {
 
     int contentLength = http.getSize();
     if (contentLength == 4194304) {
-        errorOut = F("This looks like the merged USB firmware.bin. OTA needs the app-only firmware-app.bin.");
+        errorOut = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
         http.end();
         return false;
     }
@@ -372,7 +396,7 @@ static void httpOtaPage() {
 }
 
 static void httpOtaInstall() {
-    String url = web.hasArg("url") ? web.arg("url") : String(OTA_DEFAULT_URL);
+    String url = web.hasArg("url") ? web.arg("url") : getDefaultOtaUrl();
     url.trim();
     String error;
     bool ok = installOtaFromUrl(url, error);
@@ -414,7 +438,7 @@ static void httpOtaUploadChunk() {
     } else if (upload.status == UPLOAD_FILE_END) {
         if (otaUploadError.length() == 0) {
             if (upload.totalSize == 4194304) {
-                otaUploadError = F("This looks like the merged USB firmware.bin. OTA needs the app-only firmware-app.bin.");
+                otaUploadError = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
                 Update.abort();
             } else if (!Update.end(true)) {
                 otaUploadError = String("Update end failed: ") + Update.errorString();
@@ -443,6 +467,9 @@ static void httpStatus() {
     String json = "{";
     json.reserve(1800);
     json += "\"fw_version\":\"" + String(FW_VERSION_STR) + "\",";
+    json += "\"board_id\":\"" + jsonEscape(String(FW_BOARD_ID_STR)) + "\",";
+    json += "\"board_name\":\"" + jsonEscape(String(FW_BOARD_NAME_STR)) + "\",";
+    json += "\"chip_family\":\"" + jsonEscape(String(FW_CHIP_FAMILY_STR)) + "\",";
     json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
     json += "\"stream_url_ip\":\"rtsp://" + WiFi.localIP().toString() + ":8554/audio1\",";
     json += "\"stream_url_mdns\":\"rtsp://" + mdnsHostname + ".local:8554/audio1\",";

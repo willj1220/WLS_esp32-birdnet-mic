@@ -21,11 +21,42 @@
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi) ==================
-#define FW_VERSION "1.9.3"
+#define FW_VERSION "1.10.0"
 // Expose FW version as a global C string for WebUI/API
 const char* FW_VERSION_STR = FW_VERSION;
 // Build timestamp for diagnostics (compile time)
 const char* FW_BUILD_DATE_STR = __DATE__ " " __TIME__;
+
+#if defined(ARDUINO_XIAO_ESP32C3)
+#define XIAO_BOARD_ID "xiao-esp32c3"
+#define XIAO_BOARD_NAME "XIAO ESP32-C3"
+#define XIAO_CHIP_FAMILY "ESP32-C3"
+#define XIAO_HAS_RF_SWITCH 0
+#elif defined(ARDUINO_XIAO_ESP32S3)
+#define XIAO_BOARD_ID "xiao-esp32s3"
+#define XIAO_BOARD_NAME "XIAO ESP32-S3"
+#define XIAO_CHIP_FAMILY "ESP32-S3"
+#define XIAO_HAS_RF_SWITCH 0
+#elif defined(ARDUINO_XIAO_ESP32C5)
+#define XIAO_BOARD_ID "xiao-esp32c5"
+#define XIAO_BOARD_NAME "XIAO ESP32-C5"
+#define XIAO_CHIP_FAMILY "ESP32-C5"
+#define XIAO_HAS_RF_SWITCH 0
+#elif defined(ARDUINO_XIAO_ESP32C6)
+#define XIAO_BOARD_ID "xiao-esp32c6"
+#define XIAO_BOARD_NAME "XIAO ESP32-C6"
+#define XIAO_CHIP_FAMILY "ESP32-C6"
+#define XIAO_HAS_RF_SWITCH 1
+#else
+#define XIAO_BOARD_ID "esp32-generic"
+#define XIAO_BOARD_NAME "ESP32 generic"
+#define XIAO_CHIP_FAMILY "ESP32"
+#define XIAO_HAS_RF_SWITCH 0
+#endif
+
+const char* FW_BOARD_ID_STR = XIAO_BOARD_ID;
+const char* FW_BOARD_NAME_STR = XIAO_BOARD_NAME;
+const char* FW_CHIP_FAMILY_STR = XIAO_CHIP_FAMILY;
 
 // Time / NTP
 const char* NTP_SERVER_1 = "pool.ntp.org";
@@ -68,9 +99,15 @@ bool mdnsRunning = false;
 #define OVERHEAT_LIMIT_STEP_C 5
 
 // -- Pins
+#if defined(D1) && defined(D2) && defined(D3)
+#define I2S_BCLK_PIN    D3
+#define I2S_LRCLK_PIN   D1
+#define I2S_DOUT_PIN    D2
+#else
 #define I2S_BCLK_PIN    21
 #define I2S_LRCLK_PIN   1
 #define I2S_DOUT_PIN    2
+#endif
 
 // -- Servers
 WiFiServer rtspServer(8554);
@@ -696,7 +733,7 @@ static String mqttBuildDeviceJson() {
     String json = "{";
     json += "\"ids\":[\"" + mqttJsonEscape(mqttDeviceId) + "\"],";
     json += "\"name\":\"ESP32 RTSP Mic\",";
-    json += "\"mdl\":\"XIAO ESP32-C6\",";
+    json += "\"mdl\":\"" + mqttJsonEscape(String(FW_BOARD_NAME_STR)) + "\",";
     json += "\"mf\":\"Sukecz\",";
     json += "\"sw\":\"" + mqttJsonEscape(String(FW_VERSION_STR)) + "\",";
     json += "\"cu\":\"http://" + mqttJsonEscape(WiFi.localIP().toString()) + "/\"";
@@ -731,6 +768,9 @@ static String mqttBuildStateJson() {
 
     String json = "{";
     json += "\"fw_version\":\"" + mqttJsonEscape(String(FW_VERSION_STR)) + "\",";
+    json += "\"board_id\":\"" + mqttJsonEscape(String(FW_BOARD_ID_STR)) + "\",";
+    json += "\"board_name\":\"" + mqttJsonEscape(String(FW_BOARD_NAME_STR)) + "\",";
+    json += "\"chip_family\":\"" + mqttJsonEscape(String(FW_CHIP_FAMILY_STR)) + "\",";
     json += "\"fw_build\":\"" + mqttJsonEscape(String(FW_BUILD_DATE_STR)) + "\",";
     json += "\"reboot_reason\":\"" + mqttJsonEscape(rebootReason) + "\",";
     json += "\"restart_counter\":" + String(restartCounter) + ",";
@@ -2801,14 +2841,19 @@ void setup() {
     loadBootMetadata();
     simplePrintln("Boot reason: " + rebootReason + ", restart #" + String(restartCounter));
 
-    // Enable external antenna (for XIAO ESP32-C6).
-    // NOTE: If you are using a board without the RF switch (or no external antenna), comment out or remove this block.
+#if XIAO_HAS_RF_SWITCH
+    // Enable external antenna path on XIAO ESP32-C6.
     pinMode(3, OUTPUT);
     digitalWrite(3, LOW);
     Serial.println("RF switch control enabled (GPIO3 LOW)");
     pinMode(14, OUTPUT);
     digitalWrite(14, HIGH);
     Serial.println("External antenna selected (GPIO14 HIGH)");
+#else
+    Serial.print("Board profile: ");
+    Serial.print(FW_BOARD_NAME_STR);
+    Serial.println(" (no firmware-controlled RF switch)");
+#endif
 
     // Load settings from flash
     loadAudioSettings();

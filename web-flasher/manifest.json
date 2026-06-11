@@ -1,27 +1,93 @@
 {
   "name": "birdnet-esp32-rtsp-mic",
-  "version": "1.9.3",
+  "version": "1.10.0",
   "homepage": "https://github.com/Sukecz/esp32-birdnet-mic",
   "new_install_prompt_erase": true,
   "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "baud": 115200,
+      "parts": [
+        {
+          "path": "bootloader-c3.bin",
+          "offset": 0
+        },
+        {
+          "path": "partitions-c3.bin",
+          "offset": 32768
+        },
+        {
+          "path": "boot_app0-c3.bin",
+          "offset": 57344
+        },
+        {
+          "path": "firmware-app-c3-1.10.0.bin",
+          "offset": 65536
+        }
+      ]
+    },
+    {
+      "chipFamily": "ESP32-S3",
+      "baud": 115200,
+      "parts": [
+        {
+          "path": "bootloader-s3.bin",
+          "offset": 0
+        },
+        {
+          "path": "partitions-s3.bin",
+          "offset": 32768
+        },
+        {
+          "path": "boot_app0-s3.bin",
+          "offset": 57344
+        },
+        {
+          "path": "firmware-app-s3-1.10.0.bin",
+          "offset": 65536
+        }
+      ]
+    },
+    {
+      "chipFamily": "ESP32-C5",
+      "baud": 115200,
+      "parts": [
+        {
+          "path": "bootloader-c5.bin",
+          "offset": 0
+        },
+        {
+          "path": "partitions-c5.bin",
+          "offset": 32768
+        },
+        {
+          "path": "boot_app0-c5.bin",
+          "offset": 57344
+        },
+        {
+          "path": "firmware-app-c5-1.10.0.bin",
+          "offset": 65536
+        }
+      ]
+    },
     {
       "chipFamily": "ESP32-C6",
       "baud": 115200,
       "parts": [
         {
-          "path": "bootloader.bin",
+          "path": "bootloader-c6.bin",
           "offset": 0
         },
         {
-          "path": "partitions.bin",
+          "path": "partitions-c6.bin",
           "offset": 32768
         },
         {
-          "path": "boot_app0.bin",
+          "path": "boot_app0-c6.bin",
           "offset": 57344
         },
         {
-          "path": "firmware-app.bin",
+          "path": "firmware-app-c6-1.10.0.bin",
           "offset": 65536
         }
       ]
