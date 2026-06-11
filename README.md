@@ -7,7 +7,8 @@
 ESP32-C6 network microphone for **BirdNET-Go** and **BirdNET-Pi**. It reads an I2S MEMS microphone
 and serves mono **16-bit PCM/L16** audio over **RTSP**.
 
-- Latest firmware: **v1.9.2** (2026-05-16)
+- Latest firmware: **v1.9.3** (2026-06-11)
+- Local development path on MINIPC: `/home/msminipc/Arduino/Birdnetmic`
 - Target sketch: `esp32-birdnet-mic`
 - Web flasher: **https://esp32mic.msmeteo.cz** (Chrome/Edge desktop, USB-C data cable)
 - Manual OTA firmware: `manual-ota-firmware/firmware-app.bin`
@@ -106,6 +107,10 @@ If VLC/ffplay works, use the same RTSP URL in BirdNET-Go or BirdNET-Pi.
 - Configurable high-pass filter for low-frequency rumble.
 - mDNS hostname support and OTA support.
 
+Default audio settings are 48 kHz, mono 16-bit PCM/L16, gain 1.2, and a 512-sample packet buffer.
+The 512-sample default is the balanced profile and avoids the BirdNET-Pi UDP stutter observed with
+1024-sample packets, while still working well for BirdNET-Go TCP.
+
 ## Recommended Hardware
 
 | Part | Qty | Notes | Link |
@@ -161,9 +166,9 @@ The firmware includes a configurable high-pass filter to reduce low-frequency ru
 
 ## Arduino IDE Build Size
 
-Firmware v1.9.2 includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core loads
+Firmware v1.9.2 and later includes `esp32-birdnet-mic/build_opt.h`, which the ESP32 Arduino core load
 automatically in Arduino IDE and `arduino-cli`. It disables unused C++ exception/unwind metadata and
-keeps the default XIAO ESP32-C6 partition scheme below the 1.2 MB app limit with about 60 KB reserve,
+keeps the default XIAO ESP32-C6 partition scheme below the 1.2 MB app limit with about 39 KB reserve,
 without removing firmware features.
 
 ## More Documentation

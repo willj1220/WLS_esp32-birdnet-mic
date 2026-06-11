@@ -2,16 +2,18 @@
 
 Statická stránka pro nahrání firmware birdnet-esp32-rtsp-mic (BirdNET-Go / BirdNET-Pi, Seeed XIAO ESP32-C6) přímo z prohlížeče pomocí ESP Web Tools.
 
-Aktuální připravený obraz: **firmware 1.9.2** (2026-05-16).
+Lokální cesta projektu na MINIPC: `/home/msminipc/Arduino/Birdnetmic`.
+
+Aktuální připravený obraz: **firmware 1.9.3** (2026-06-11).
 
 Výchozí veřejný build:
 - má zapnutou externí anténu na XIAO ESP32-C6,
 - nemá nastavené OTA heslo,
 - patří jen do důvěryhodné lokální sítě.
 
-Firmware 1.9.2 obsahuje opravu velikosti buildu pro Arduino IDE na Seeed XIAO ESP32-C6: soubor
+Firmware 1.9.2 a novější obsahuje opravu velikosti buildu pro Arduino IDE na Seeed XIAO ESP32-C6: soubor
 `esp32-birdnet-mic/build_opt.h` vypíná nepoužitá C++ exception/unwind metadata a nechává zhruba
-60 KB rezervu v defaultní 1.2 MB app partition bez odebrání funkcí.
+39 KB rezervu v defaultní 1.2 MB app partition bez odebrání funkcí.
 
 Firmware je určený pro I2S mikrofon **ICS-43434** jako referenční/testovanou volbu.
 Mikrofon **INMP441** byl uživatelsky potvrzený jako kompatibilní bez změn firmwaru při stejném

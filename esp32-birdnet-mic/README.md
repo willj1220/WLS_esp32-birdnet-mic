@@ -8,7 +8,8 @@ Arduino firmware for an ESP32-C6 I2S microphone that serves **mono 16-bit PCM/L1
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.9.2** (2026-05-16)
+- Latest firmware: **v1.9.3** (2026-06-11)
+- Local development path on MINIPC: `/home/msminipc/Arduino/Birdnetmic`
 - Tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
 - User-facing overview and wiring: `../README.md`
@@ -52,14 +53,15 @@ remains available only as a compatibility alias for stream 1.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
 
-## What's New In v1.9.2
+## What's New In v1.9.3
 
-- Web UI now has a **Firmware update** link.
-- The update page has two simple options:
-  - **Automatic update**: the device downloads the latest app build from `esp32mic.msmeteo.cz`.
-  - **Upload compiled file**: upload `firmware-app.bin` or `esp32-birdnet-mic.ino.bin` from your computer.
-- The public web flasher now has an OTA section: enter the device IP and open the update page.
-- Default public build: external antenna path ON, no OTA password.
+- Default buffer is now **512 samples** after BirdNET-Pi UDP testing showed stutter with 1024-sample
+  packets.
+- Sample rate settings now accept **8,000-192,000 Hz** in both the Web UI and API.
+- Audio settings are saved only after the I2S pipeline restarts successfully; unsupported settings
+  roll back immediately instead of silently reverting later.
+- Web UI dirty-field highlighting now clears reliably after successful saves and stays visible when
+  a save is rejected.
 
 ## Hardware
 
@@ -96,7 +98,7 @@ block in `setup()`.
 - Sample rate: 48 kHz
 - Audio format: mono 16-bit PCM/L16
 - Gain: 1.2
-- Buffer: 1024 samples
+- Buffer: 512 samples
 - I2S shift: 12 bits
 - High-pass filter: ON, 500 Hz
 - Wi-Fi TX power: about 19.5 dBm
@@ -107,6 +109,10 @@ block in `setup()`.
 - Time sync: ON
 - XIAO ESP32-C6 antenna path: external antenna ON
 - OTA password: none in the default public build
+
+The sample-rate setting accepts 8,000-192,000 Hz. 192 kHz is allowed by the UI/API for users who
+want to test ultrasonic-capable microphones, but bandwidth, CPU load, I2S stability, and BirdNET
+backend support should be verified on the target setup.
 
 ## Web UI
 
@@ -308,6 +314,12 @@ arduino-cli compile --fqbn <BOARD_FQBN> esp32-birdnet-mic
 arduino-cli upload -p <PORT> --fqbn <BOARD_FQBN> esp32-birdnet-mic
 ```
 
+From outside the repository, use the full sketch path:
+
+```bash
+arduino-cli compile --fqbn <BOARD_FQBN> /home/msminipc/Arduino/Birdnetmic/esp32-birdnet-mic
+```
+
 ### PlatformIO
 
 Typical target is an ESP32-C6 Arduino environment, for example `env:xiao_esp32c6`:
@@ -360,6 +372,7 @@ ohLatched        Persisted thermal latch
 ```
 
 Apply changes through Web UI or API. Audio-related updates call `restartI2S()` when needed.
+Current validation ranges include `sampleRate=8000..192000` and `bufferSize=256..8192`.
 
 ## RTSP Implementation Notes
 

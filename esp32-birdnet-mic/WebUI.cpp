@@ -104,7 +104,7 @@ static String otaUploadError;
 extern float wifiPowerLevelToDbm(wifi_power_t lvl);
 extern String formatUptime(unsigned long seconds);
 extern String formatSince(unsigned long eventMs);
-extern void restartI2S();
+extern bool restartI2S();
 extern void saveAudioSettings();
 extern void applyWifiTxPower(bool log);
 extern const char* FW_VERSION_STR;
@@ -649,7 +649,8 @@ static void httpActionResetI2S(){
     if (!requireMutationAuth()) return;
 
     webui_pushLog(F("UI action: reset_i2s"));
-    restartI2S(); apiSendJSON(F("{\"ok\":true}"));
+    if (restartI2S()) apiSendJSON(F("{\"ok\":true}"));
+    else apiSendJSON(F("{\"ok\":false,\"error\":\"i2s_restart_failed\"}"));
 }
 
 static void httpActionTimeSync(){
@@ -802,6 +803,24 @@ static inline bool argToInt(int32_t &out) {
     return parseInt32Strict(v, out);
 }
 
+static bool restartAndSaveAudioOrRollback(uint32_t oldRate, float oldGain, uint16_t oldBuffer, uint8_t oldShift, uint32_t oldMinRate) {
+    if (restartI2S()) {
+        saveAudioSettings();
+        return true;
+    }
+
+    webui_pushLog(F("Audio setting rejected: I2S restart failed, rolling back."));
+    currentSampleRate = oldRate;
+    currentGainFactor = oldGain;
+    currentBufferSize = oldBuffer;
+    i2sShiftBits = oldShift;
+    minAcceptableRate = oldMinRate;
+    if (!restartI2S()) {
+        webui_pushLog(F("Audio rollback failed; reboot recommended."));
+    }
+    return false;
+}
+
 static void httpSet() {
     if (!requireMutationAuth()) return;
 
@@ -824,22 +843,40 @@ static void httpSet() {
     if (key == "gain") {
         handled = true;
         float v;
-        if (argToFloat(v) && v >= 0.1f && v <= 100.0f) { currentGainFactor = v; saveAudioSettings(); restartI2S(); applied = true; }
+        if (argToFloat(v) && v >= 0.1f && v <= 100.0f) {
+            uint32_t oldRate = currentSampleRate; float oldGain = currentGainFactor; uint16_t oldBuffer = currentBufferSize; uint8_t oldShift = i2sShiftBits; uint32_t oldMinRate = minAcceptableRate;
+            currentGainFactor = v;
+            applied = restartAndSaveAudioOrRollback(oldRate, oldGain, oldBuffer, oldShift, oldMinRate);
+        }
     }
     else if (key == "rate") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 8000 && v <= 96000) { currentSampleRate = v; if (autoThresholdEnabled) { minAcceptableRate = computeRecommendedMinRate(); } saveAudioSettings(); restartI2S(); applied = true; }
+        if (argToUInt(v) && v >= 8000 && v <= 192000) {
+            uint32_t oldRate = currentSampleRate; float oldGain = currentGainFactor; uint16_t oldBuffer = currentBufferSize; uint8_t oldShift = i2sShiftBits; uint32_t oldMinRate = minAcceptableRate;
+            currentSampleRate = v;
+            if (autoThresholdEnabled) { minAcceptableRate = computeRecommendedMinRate(); }
+            applied = restartAndSaveAudioOrRollback(oldRate, oldGain, oldBuffer, oldShift, oldMinRate);
+        }
     }
     else if (key == "buffer") {
         handled = true;
         uint16_t v;
-        if (argToUShort(v) && v >= 256 && v <= 8192) { currentBufferSize = v; if (autoThresholdEnabled) { minAcceptableRate = computeRecommendedMinRate(); } saveAudioSettings(); restartI2S(); applied = true; }
+        if (argToUShort(v) && v >= 256 && v <= 8192) {
+            uint32_t oldRate = currentSampleRate; float oldGain = currentGainFactor; uint16_t oldBuffer = currentBufferSize; uint8_t oldShift = i2sShiftBits; uint32_t oldMinRate = minAcceptableRate;
+            currentBufferSize = v;
+            if (autoThresholdEnabled) { minAcceptableRate = computeRecommendedMinRate(); }
+            applied = restartAndSaveAudioOrRollback(oldRate, oldGain, oldBuffer, oldShift, oldMinRate);
+        }
     }
     else if (key == "shift") {
         handled = true;
         uint8_t v;
-        if (argToUChar(v) && v <= 24) { i2sShiftBits = v; saveAudioSettings(); restartI2S(); applied = true; }
+        if (argToUChar(v) && v <= 24) {
+            uint32_t oldRate = currentSampleRate; float oldGain = currentGainFactor; uint16_t oldBuffer = currentBufferSize; uint8_t oldShift = i2sShiftBits; uint32_t oldMinRate = minAcceptableRate;
+            i2sShiftBits = v;
+            applied = restartAndSaveAudioOrRollback(oldRate, oldGain, oldBuffer, oldShift, oldMinRate);
+        }
     }
     else if (key == "wifi_tx") {
         handled = true;

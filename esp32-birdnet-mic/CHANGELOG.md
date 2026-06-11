@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.3 — 2026-06-11
+- Defaults: changed the packet buffer default from 1024 to 512 samples after BirdNET-Pi UDP testing
+  showed stutter with 1024-sample packets.
+- Audio settings: sample rate validation now accepts up to 192000 Hz in both Web UI and API.
+- Audio settings: gain, sample rate, buffer, and I2S shift are now persisted only after the I2S
+  pipeline restarts successfully; failed audio changes roll back instead of rebooting or silently
+  reverting later.
+- Web UI: fixed dirty-field highlighting so saved stream/client/CPU/auto-recovery fields clear
+  correctly after polling or a successful save, and failed saves remain marked as unsaved.
+- Web flasher artifacts: version bumped to 1.9.3; `firmware.bin`, `firmware-app.bin`, and
+  `ota-version.txt` are regenerated for publishing.
+- Docs: documented the current MINIPC project path `/home/msminipc/Arduino/Birdnetmic` and refreshed
+  default audio settings.
+
 ## 1.9.2 — 2026-05-16
 - Web UI: added `/ota` firmware update page.
 - OTA page: added automatic update from `http://esp32mic.msmeteo.cz/firmware-app.bin`.

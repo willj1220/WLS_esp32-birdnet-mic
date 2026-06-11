@@ -21,7 +21,7 @@
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi) ==================
-#define FW_VERSION "1.9.2"
+#define FW_VERSION "1.9.3"
 // Expose FW version as a global C string for WebUI/API
 const char* FW_VERSION_STR = FW_VERSION;
 // Build timestamp for diagnostics (compile time)
@@ -52,7 +52,7 @@ bool mdnsRunning = false;
 // -- DEFAULT PARAMETERS (configurable via Web UI / API)
 #define DEFAULT_SAMPLE_RATE 48000
 #define DEFAULT_GAIN_FACTOR 1.2f
-#define DEFAULT_BUFFER_SIZE 1024   // Stable streaming profile by default
+#define DEFAULT_BUFFER_SIZE 512    // Balanced default; safer for BirdNET-Pi UDP than 1024-sample packets
 #define DEFAULT_WIFI_TX_DBM 19.5f  // Default WiFi TX power in dBm
 #define DEFAULT_MQTT_PORT 1883
 #define DEFAULT_MQTT_PUBLISH_INTERVAL_SEC 60
@@ -2048,7 +2048,7 @@ void resetToDefaultSettings() {
 }
 
 // Restart I2S with new parameters
-void restartI2S() {
+bool restartI2S() {
     simplePrintln("Restarting I2S with new parameters...");
     stopAllRtspClients("I2S restart");
     stopAudioProducer();
@@ -2063,18 +2063,22 @@ void restartI2S() {
     i2s_16bit_network_buffer = (int16_t*)malloc(currentBufferSize * sizeof(int16_t));
     if (!i2s_32bit_buffer || !i2s_16bit_buffer || !i2s_16bit_network_buffer) {
         simplePrintln("FATAL: Memory allocation failed after parameter change!");
-        ESP.restart();
+        if (i2s_32bit_buffer) { free(i2s_32bit_buffer); i2s_32bit_buffer = nullptr; }
+        if (i2s_16bit_buffer) { free(i2s_16bit_buffer); i2s_16bit_buffer = nullptr; }
+        if (i2s_16bit_network_buffer) { free(i2s_16bit_network_buffer); i2s_16bit_network_buffer = nullptr; }
+        return false;
     }
 
     if (!setup_i2s_driver()) {
         simplePrintln("FATAL: I2S restart failed!");
-        ESP.restart();
+        return false;
     }
     // Refresh HPF with current parameters
     updateHighpassCoeffs();
     maxPacketRate = 0;
     minPacketRate = 0xFFFFFFFF;
     simplePrintln("I2S restarted successfully");
+    return true;
 }
 
 // Minimal print helpers: Serial + buffered for Web UI
