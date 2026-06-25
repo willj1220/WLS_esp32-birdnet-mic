@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.10.1 - 2026-06-25
+- OTA security: `/ota/install` and `/ota/upload` now require the same mutation header as other
+  state-changing Web UI/API endpoints.
+- OTA safety: automatic pull updates are limited to official `firmware-app*.bin` URLs, and OTA now
+  rejects oversized or merged USB firmware images for 4 MB and 8 MB targets.
+- OTA maintenance: board-specific automatic update URLs are generated from the compiled
+  `FW_VERSION` instead of hard-coded release strings.
+- CI: GitHub Actions now compile-checks all supported XIAO ESP32-C3/S3/C5/C6 firmware targets.
+
 ## 1.10.0 — 2026-06-11
 - Board support: added compile-time profiles for Seeed Studio XIAO ESP32-C3, XIAO ESP32-S3,
   XIAO ESP32-C5, and XIAO ESP32-C6.

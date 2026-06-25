@@ -8,7 +8,7 @@ Arduino firmware for Seeed XIAO ESP32 I2S microphones that serve **mono 16-bit P
 **RTSP** for **BirdNET-Go** and **BirdNET-Pi**. It also provides a Web UI, JSON API, MQTT telemetry,
 and Home Assistant MQTT Discovery.
 
-- Latest firmware: **v1.10.0** (2026-06-11)
+- Latest firmware: **v1.10.1** (2026-06-25)
 - Build targets: Seeed Studio **XIAO ESP32-C3**, **XIAO ESP32-S3**, **XIAO ESP32-C5**, **XIAO ESP32-C6**
 - Runtime-tested board: Seeed Studio **XIAO ESP32-C6**
 - Reference microphone: **ICS-43434**; **INMP441** has been reported compatible with the same wiring
@@ -52,6 +52,13 @@ remains available only as a compatibility alias for stream 1.
 5. After reboot, open `http://<device-ip>/`.
 
 Default hostname is unique per device, for example `esp32mic-a1b2c3`.
+
+## What's New In v1.10.1
+
+- OTA update endpoints now require the same mutation header as other state-changing Web UI/API calls.
+- Automatic OTA URLs are generated from the compiled firmware version, reducing release drift.
+- OTA rejects oversized or merged USB firmware images, including 4 MB and 8 MB full-flash files.
+- GitHub Actions compile-checks all supported XIAO ESP32-C3/S3/C5/C6 targets.
 
 ## What's New In v1.10.0
 
@@ -166,7 +173,7 @@ You have two choices:
    the matching app-only file from `../manual-ota-firmware/`.
 
 Automatic update uses a board-specific plain HTTP URL with the firmware version in the filename, for
-example `http://esp32mic.msmeteo.cz/firmware-app-c3-1.10.0.bin`. The server must allow these files
+example `http://esp32mic.msmeteo.cz/firmware-app-c3-1.10.1.bin`. The server must allow these files
 over plain HTTP without redirecting them to HTTPS, because TLS support does not fit in the tight
 XIAO ESP32-C3/C6 default app partitions. `firmware-app.bin` remains a C6 compatibility alias for
 older firmware.

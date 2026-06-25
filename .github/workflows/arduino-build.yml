@@ -1,0 +1,42 @@
+name: arduino-build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: XIAO ESP32-C3
+            fqbn: esp32:esp32:XIAO_ESP32C3
+          - name: XIAO ESP32-S3
+            fqbn: esp32:esp32:XIAO_ESP32S3
+          - name: XIAO ESP32-C5
+            fqbn: esp32:esp32:XIAO_ESP32C5
+          - name: XIAO ESP32-C6
+            fqbn: esp32:esp32:XIAO_ESP32C6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 platform
+        run: |
+          arduino-cli config init
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32
+
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib install WiFiManager
+          arduino-cli lib install PubSubClient
+
+      - name: Compile ${{ matrix.name }}
+        run: |
+          arduino-cli compile --fqbn "${{ matrix.fqbn }}" esp32-birdnet-mic

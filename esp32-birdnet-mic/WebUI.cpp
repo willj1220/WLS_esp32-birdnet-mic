@@ -96,6 +96,7 @@ static const uint32_t OH_MAX = 95;
 static const uint32_t OH_STEP = 5;
 static const char* UI_MUTATION_HEADER = "X-ESP32MIC-CSRF";
 static const char* UI_MUTATION_TOKEN = "1";
+static const char* OFFICIAL_OTA_HOST = "esp32mic.msmeteo.cz";
 static bool otaUploadOk = false;
 static String otaUploadError;
 
@@ -134,18 +135,18 @@ extern String mqttClientId;
 static String getDefaultOtaUrl() {
     String boardId = String(FW_BOARD_ID_STR);
     if (boardId == "xiao-esp32c3") {
-        return F("http://esp32mic.msmeteo.cz/firmware-app-c3-1.10.0.bin");
+        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c3-" + FW_VERSION_STR + ".bin";
     }
     if (boardId == "xiao-esp32s3") {
-        return F("http://esp32mic.msmeteo.cz/firmware-app-s3-1.10.0.bin");
+        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-s3-" + FW_VERSION_STR + ".bin";
     }
     if (boardId == "xiao-esp32c5") {
-        return F("http://esp32mic.msmeteo.cz/firmware-app-c5-1.10.0.bin");
+        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c5-" + FW_VERSION_STR + ".bin";
     }
     if (boardId == "xiao-esp32c6") {
-        return F("http://esp32mic.msmeteo.cz/firmware-app-c6-1.10.0.bin");
+        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c6-" + FW_VERSION_STR + ".bin";
     }
-    return F("http://esp32mic.msmeteo.cz/firmware-app.bin");
+    return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app.bin";
 }
 extern uint16_t mqttPublishIntervalSec;
 extern bool mqttConnected;
@@ -211,7 +212,7 @@ static void apiSendJSON(const String &json) {
     web.send(200, "application/json", json);
 }
 
-static bool requireMutationAuth() {
+static bool hasMutationAuth() {
     if (web.hasHeader(UI_MUTATION_HEADER)) {
         String token = web.header(UI_MUTATION_HEADER);
         token.trim();
@@ -219,6 +220,12 @@ static bool requireMutationAuth() {
             return true;
         }
     }
+    return false;
+}
+
+static bool requireMutationAuth() {
+    if (hasMutationAuth()) return true;
+
     web.sendHeader("Cache-Control", "no-cache");
     web.send(403, "application/json", "{\"ok\":false,\"error\":\"forbidden\"}");
     return false;
@@ -282,22 +289,58 @@ static void sendOtaPage(const String &message = String(), bool ok = true) {
         html += F("</div>");
     }
     html += F("<div class='card'><h2>Automatic update</h2><p class='muted'>Use this when the device has internet access. It downloads the latest app build from the project web flasher page and installs it automatically.</p>");
-    html += F("<form method='post' action='/ota/install' onsubmit=\"return confirm('Install firmware update now? The stream will stop and the device will reboot.');\">");
+    html += F("<form id='ota-install-form' method='post' action='/ota/install'>");
     html += F("<label>Firmware URL</label><input name='url' value='");
     html += htmlEscape(defaultOtaUrl);
     html += F("'><button type='submit'>Download and install latest firmware</button></form></div>");
     html += F("<div class='card'><h2>Upload compiled file</h2><p class='muted'>Use this when the device has no internet access. Select the matching app-only file such as <code>firmware-app-c3.bin</code>, <code>firmware-app-s3.bin</code>, <code>firmware-app-c5.bin</code>, or <code>firmware-app-c6.bin</code>. Do not upload the USB <code>firmware.bin</code> merged image here.</p>");
-    html += F("<form method='post' action='/ota/upload' enctype='multipart/form-data' onsubmit=\"return confirm('Upload and install selected firmware now?');\">");
+    html += F("<form id='ota-upload-form' method='post' action='/ota/upload' enctype='multipart/form-data'>");
     html += F("<input type='file' name='firmware' accept='.bin,application/octet-stream' required><button type='submit'>Upload and install file</button></form></div>");
+    html += F("<script>(function(){function replaceWithResponse(r){return r.text().then(function(t){document.open();document.write(t);document.close();});}function fail(e){alert('Update request failed: '+e);}var install=document.getElementById('ota-install-form');if(install){install.addEventListener('submit',function(e){e.preventDefault();if(!confirm('Install firmware update now? The stream will stop and the device will reboot.'))return;var body=new URLSearchParams(new FormData(install));fetch('/ota/install',{method:'POST',cache:'no-store',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8','X-ESP32MIC-CSRF':'1'},body:body}).then(replaceWithResponse).catch(fail);});}var upload=document.getElementById('ota-upload-form');if(upload){upload.addEventListener('submit',function(e){e.preventDefault();if(!confirm('Upload and install selected firmware now?'))return;fetch('/ota/upload',{method:'POST',cache:'no-store',headers:{'X-ESP32MIC-CSRF':'1'},body:new FormData(upload)}).then(replaceWithResponse).catch(fail);});}})();</script>");
     html += F("</div></body></html>");
     web.sendHeader("Cache-Control", "no-store");
     web.send(200, "text/html; charset=utf-8", html);
+}
+
+static bool isLikelyMergedFirmwareName(String filename) {
+    filename.toLowerCase();
+    int slash = filename.lastIndexOf('/');
+    if (slash >= 0) filename = filename.substring(slash + 1);
+    slash = filename.lastIndexOf('\\');
+    if (slash >= 0) filename = filename.substring(slash + 1);
+    if (filename == "firmware.bin") return true;
+    if (filename.startsWith("firmware-") && !filename.startsWith("firmware-app-")) return true;
+    return false;
+}
+
+static bool validateOtaImageSize(size_t imageSize, String &errorOut) {
+    if (imageSize == 0) {
+        errorOut = F("No firmware data received.");
+        return false;
+    }
+    if (imageSize == 4194304UL || imageSize == 8388608UL) {
+        errorOut = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
+        return false;
+    }
+    uint32_t freeSketchSpace = ESP.getFreeSketchSpace();
+    if (freeSketchSpace > 0) {
+        uint32_t maxSketchSpace = freeSketchSpace & 0xFFFFF000UL;
+        if (maxSketchSpace > 0 && imageSize > maxSketchSpace) {
+            errorOut = F("Firmware image is larger than the OTA app partition. Use the matching app-only firmware-app-*.bin file.");
+            return false;
+        }
+    }
+    return true;
 }
 
 static bool isSafeOtaUrl(const String &url) {
     if (url.length() < 12 || url.length() > 220) return false;
     if (!url.startsWith("http://")) return false;
     if (url.indexOf(' ') >= 0 || url.indexOf('\r') >= 0 || url.indexOf('\n') >= 0) return false;
+    String prefix = String("http://") + OFFICIAL_OTA_HOST + "/";
+    if (!url.startsWith(prefix)) return false;
+    if (!url.endsWith(".bin")) return false;
+    if (url.indexOf("firmware-app") < 0) return false;
     return true;
 }
 
@@ -340,8 +383,7 @@ static bool streamUpdate(Stream &stream, int contentLength, String &errorOut) {
         yield();
     }
 
-    if (writtenTotal == 0) {
-        errorOut = F("No firmware data received.");
+    if (!validateOtaImageSize(writtenTotal, errorOut)) {
         Update.abort();
         return false;
     }
@@ -358,7 +400,7 @@ static bool streamUpdate(Stream &stream, int contentLength, String &errorOut) {
 
 static bool installOtaFromUrl(const String &url, String &errorOut) {
     if (!isSafeOtaUrl(url)) {
-        errorOut = F("Only http:// firmware URLs are supported.");
+        errorOut = F("Only official http://esp32mic.msmeteo.cz/firmware-app*.bin URLs are supported.");
         return false;
     }
 
@@ -378,8 +420,7 @@ static bool installOtaFromUrl(const String &url, String &errorOut) {
     }
 
     int contentLength = http.getSize();
-    if (contentLength == 4194304) {
-        errorOut = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
+    if (contentLength > 0 && !validateOtaImageSize((size_t)contentLength, errorOut)) {
         http.end();
         return false;
     }
@@ -396,6 +437,8 @@ static void httpOtaPage() {
 }
 
 static void httpOtaInstall() {
+    if (!requireMutationAuth()) return;
+
     String url = web.hasArg("url") ? web.arg("url") : getDefaultOtaUrl();
     url.trim();
     String error;
@@ -410,6 +453,8 @@ static void httpOtaInstall() {
 }
 
 static void httpOtaUploadDone() {
+    if (!requireMutationAuth()) return;
+
     if (otaUploadOk) {
         sendOtaPage(F("Firmware uploaded and installed. Device will reboot now."), true);
         scheduleReboot(false, 700);
@@ -423,6 +468,16 @@ static void httpOtaUploadChunk() {
     if (upload.status == UPLOAD_FILE_START) {
         otaUploadOk = false;
         otaUploadError = "";
+        if (!hasMutationAuth()) {
+            otaUploadError = F("forbidden");
+            Update.abort();
+            return;
+        }
+        if (isLikelyMergedFirmwareName(upload.filename)) {
+            otaUploadError = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
+            Update.abort();
+            return;
+        }
         stopAllRtspClients("OTA upload starting");
         webui_pushLog(String("OTA upload start: ") + upload.filename);
         if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
@@ -437,8 +492,7 @@ static void httpOtaUploadChunk() {
         }
     } else if (upload.status == UPLOAD_FILE_END) {
         if (otaUploadError.length() == 0) {
-            if (upload.totalSize == 4194304) {
-                otaUploadError = F("This looks like a merged USB firmware image. OTA needs the matching app-only firmware-app-*.bin file.");
+            if (!validateOtaImageSize(upload.totalSize, otaUploadError)) {
                 Update.abort();
             } else if (!Update.end(true)) {
                 otaUploadError = String("Update end failed: ") + Update.errorString();
