@@ -133,20 +133,9 @@ extern String mqttDiscoveryPrefix;
 extern String mqttClientId;
 
 static String getDefaultOtaUrl() {
-    String boardId = String(FW_BOARD_ID_STR);
-    if (boardId == "xiao-esp32c3") {
-        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c3-" + FW_VERSION_STR + ".bin";
-    }
-    if (boardId == "xiao-esp32s3") {
-        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-s3-" + FW_VERSION_STR + ".bin";
-    }
-    if (boardId == "xiao-esp32c5") {
-        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c5-" + FW_VERSION_STR + ".bin";
-    }
-    if (boardId == "xiao-esp32c6") {
-        return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app-c6-" + FW_VERSION_STR + ".bin";
-    }
-    return String("http://") + OFFICIAL_OTA_HOST + "/firmware-app.bin";
+    // Custom board fork: never auto-pull upstream XIAO binaries.
+    // Use the manual OTA upload page with your own compiled firmware-app .bin.
+    return String("");
 }
 extern uint16_t mqttPublishIntervalSec;
 extern bool mqttConnected;
