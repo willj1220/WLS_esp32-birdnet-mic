@@ -27,32 +27,10 @@ const char* FW_VERSION_STR = FW_VERSION;
 // Build timestamp for diagnostics (compile time)
 const char* FW_BUILD_DATE_STR = __DATE__ " " __TIME__;
 
-#if defined(ARDUINO_XIAO_ESP32C3)
-#define XIAO_BOARD_ID "xiao-esp32c3"
-#define XIAO_BOARD_NAME "XIAO ESP32-C3"
-#define XIAO_CHIP_FAMILY "ESP32-C3"
-#define XIAO_HAS_RF_SWITCH 0
-#elif defined(ARDUINO_XIAO_ESP32S3)
-#define XIAO_BOARD_ID "xiao-esp32s3"
-#define XIAO_BOARD_NAME "XIAO ESP32-S3"
+// Single board profile: generic ESP32-S3 devkit (N16R8) + WM8782 I2S ADC
+#define XIAO_BOARD_ID "esp32s3-devkit-wm8782"
+#define XIAO_BOARD_NAME "ESP32-S3 DevKit + WM8782"
 #define XIAO_CHIP_FAMILY "ESP32-S3"
-#define XIAO_HAS_RF_SWITCH 0
-#elif defined(ARDUINO_XIAO_ESP32C5)
-#define XIAO_BOARD_ID "xiao-esp32c5"
-#define XIAO_BOARD_NAME "XIAO ESP32-C5"
-#define XIAO_CHIP_FAMILY "ESP32-C5"
-#define XIAO_HAS_RF_SWITCH 0
-#elif defined(ARDUINO_XIAO_ESP32C6)
-#define XIAO_BOARD_ID "xiao-esp32c6"
-#define XIAO_BOARD_NAME "XIAO ESP32-C6"
-#define XIAO_CHIP_FAMILY "ESP32-C6"
-#define XIAO_HAS_RF_SWITCH 1
-#else
-#define XIAO_BOARD_ID "esp32-generic"
-#define XIAO_BOARD_NAME "ESP32 generic"
-#define XIAO_CHIP_FAMILY "ESP32"
-#define XIAO_HAS_RF_SWITCH 0
-#endif
 
 const char* FW_BOARD_ID_STR = XIAO_BOARD_ID;
 const char* FW_BOARD_NAME_STR = XIAO_BOARD_NAME;
@@ -98,16 +76,11 @@ bool mdnsRunning = false;
 #define OVERHEAT_MAX_LIMIT_C 95
 #define OVERHEAT_LIMIT_STEP_C 5
 
-// -- Pins
-#if defined(D1) && defined(D2) && defined(D3)
-#define I2S_BCLK_PIN    D3
-#define I2S_LRCLK_PIN   D1
-#define I2S_DOUT_PIN    D2
-#else
+// -- Pins (ESP32-S3 devkit, all GPIO-matrix routable)
 #define I2S_BCLK_PIN    21
 #define I2S_LRCLK_PIN   1
 #define I2S_DOUT_PIN    2
-#endif
+#define I2S_MCLK_PIN    4   // 256*fs master clock out to WM8782 (12.288 MHz @ 48 kHz)
 
 // -- Servers
 WiFiServer rtspServer(8554);
@@ -2311,8 +2284,10 @@ bool setup_i2s_driver() {
     i2s_config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
     i2s_config.dma_desc_num = 8;
     i2s_config.dma_frame_num = dma_buf_len;
+    i2s_config.mclk_multiple = I2S_MCLK_MULTIPLE_256;  // synchronous MCLK for WM8782 slave mode
 
     i2s_pin_config_t pin_config = {};
+    pin_config.mck_io_num = I2S_MCLK_PIN;
     pin_config.bck_io_num = I2S_BCLK_PIN;
     pin_config.ws_io_num = I2S_LRCLK_PIN;
     pin_config.data_out_num = I2S_PIN_NO_CHANGE;
@@ -2841,19 +2816,8 @@ void setup() {
     loadBootMetadata();
     simplePrintln("Boot reason: " + rebootReason + ", restart #" + String(restartCounter));
 
-#if XIAO_HAS_RF_SWITCH
-    // Enable external antenna path on XIAO ESP32-C6.
-    pinMode(3, OUTPUT);
-    digitalWrite(3, LOW);
-    Serial.println("RF switch control enabled (GPIO3 LOW)");
-    pinMode(14, OUTPUT);
-    digitalWrite(14, HIGH);
-    Serial.println("External antenna selected (GPIO14 HIGH)");
-#else
     Serial.print("Board profile: ");
-    Serial.print(FW_BOARD_NAME_STR);
-    Serial.println(" (no firmware-controlled RF switch)");
-#endif
+    Serial.println(FW_BOARD_NAME_STR);
 
     // Load settings from flash
     loadAudioSettings();
