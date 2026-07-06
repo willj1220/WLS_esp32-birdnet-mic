@@ -987,7 +987,7 @@ static void httpSet() {
     else if (key == "cpu_freq") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 40 && v <= 160) { cpuFrequencyMhz = (uint8_t)v; setCpuFrequencyMhz(cpuFrequencyMhz); saveAudioSettings(); applied = true; }
+        if (argToUInt(v) && v >= 40 && v <= 240) { cpuFrequencyMhz = (uint8_t)v; setCpuFrequencyMhz(cpuFrequencyMhz); saveAudioSettings(); applied = true; }  // 240 = S3 max
     }
     else if (key == "hp_enable") {
         handled = true;
@@ -1194,7 +1194,7 @@ static void httpSet() {
     else if (key == "max_clients") {
         handled = true;
         uint32_t v;
-        if (argToUInt(v) && v >= 1 && v <= 3) { maxActiveClients = (uint8_t)v; saveAudioSettings(); applied = true; }
+        if (argToUInt(v) && v >= 1 && v <= 6) { maxActiveClients = (uint8_t)v; saveAudioSettings(); applied = true; }  // keep in sync with MAX_CLIENTS
     }
 
     if (!handled) {
