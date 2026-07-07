@@ -82,13 +82,9 @@ bool mdnsRunning = false;
 #define I2S_DOUT_PIN    2
 #define I2S_MCLK_PIN    4   // 256*fs master clock out to WM8782 (12.288 MHz @ 48 kHz)
 
-// -- Packetization / diagnostics (WLS options)
-#define DEBUG_SAMPLES        0   // 1 = log raw I2S words + shifted samples every 5 s (diagnose shift/format/wiring)
-#define FRAMES_PER_PACKET    0   // 0 = one RTP packet per DMA chunk; >0 = fixed frames per RTP packet (e.g. 240 = 5 ms @ 48 kHz)
-#if FRAMES_PER_PACKET > 0
-#define I2S_INTS_PER_PACKET  (FRAMES_PER_PACKET * 2)                 // 32-bit stereo words per packet window
-#define PAYLOAD_BYTES        (FRAMES_PER_PACKET * sizeof(int16_t))   // mono 16-bit RTP payload bytes per packet
-#endif
+// -- Packetization / diagnostics (WLS options, runtime-configurable via Web UI, NVS-persisted)
+bool debugSamples = false;        // log raw I2S words + shifted samples every 5 s
+uint16_t framesPerPacket = 0;     // 0 = one RTP packet per DMA chunk; >0 = fixed frames per RTP packet (e.g. 240 = 5 ms @ 48 kHz)
 
 // -- Servers
 WiFiServer rtspServer(8554);
@@ -1838,6 +1834,8 @@ void loadAudioSettings() {
     performanceCheckInterval = audioPrefs.getUInt("checkInterval", 15);
     autoThresholdEnabled = audioPrefs.getBool("thrAuto", true);
     cpuFrequencyMhz = audioPrefs.getUChar("cpuFreq", 160);
+    debugSamples = audioPrefs.getBool("dbgSamp", false);
+    framesPerPacket = audioPrefs.getUShort("fpp", 0);
     wifiTxPowerDbm = audioPrefs.getFloat("wifiTxDbm", DEFAULT_WIFI_TX_DBM);
     highpassEnabled = audioPrefs.getBool("hpEnable", DEFAULT_HPF_ENABLED);
     highpassCutoffHz = (uint16_t)audioPrefs.getUInt("hpCutoff", DEFAULT_HPF_CUTOFF_HZ);
@@ -1918,6 +1916,8 @@ void saveAudioSettings() {
     audioPrefs.putUInt("checkInterval", performanceCheckInterval);
     audioPrefs.putBool("thrAuto", autoThresholdEnabled);
     audioPrefs.putUChar("cpuFreq", cpuFrequencyMhz);
+    audioPrefs.putBool("dbgSamp", debugSamples);
+    audioPrefs.putUShort("fpp", framesPerPacket);
     audioPrefs.putFloat("wifiTxDbm", wifiTxPowerDbm);
     audioPrefs.putBool("hpEnable", highpassEnabled);
     audioPrefs.putUInt("hpCutoff", (uint32_t)highpassCutoffHz);
@@ -2027,6 +2027,8 @@ void resetToDefaultSettings() {
     minAcceptableRate = computeRecommendedMinRate();
     performanceCheckInterval = 15;
     cpuFrequencyMhz = 160;
+    debugSamples = false;
+    framesPerPacket = 0;
     wifiTxPowerDbm = DEFAULT_WIFI_TX_DBM;
     highpassEnabled = DEFAULT_HPF_ENABLED;
     highpassCutoffHz = DEFAULT_HPF_CUTOFF_HZ;
@@ -2218,7 +2220,7 @@ void audioProducerTask(void* /*arg*/) {
             }
         }
 
-#if DEBUG_SAMPLES
+        if (debugSamples) {
         static uint32_t lastSampleDebug = 0;
         if (millis() - lastSampleDebug > 5000) {
             lastSampleDebug = millis();
@@ -2229,7 +2231,7 @@ void audioProducerTask(void* /*arg*/) {
                           (int)i2s_16bit_buffer[0][0], (int)i2s_16bit_buffer[1][0],
                           i2sShiftBits, currentGainFactor, peakAbs);
         }
-#endif
+        }
 
         if (peakAbs > 32767.0f) peakAbs = 32767.0f;
         lastPeakAbs16 = (uint16_t)peakAbs;
@@ -2528,11 +2530,11 @@ void streamAudio() {
                 s = (uint16_t)((s << 8) | (s >> 8));
                 i2s_16bit_network_buffer[pi][i] = (int16_t)s;
             }
-            bool delivered = false;
-#if FRAMES_PER_PACKET > 0
-            for (int off = 0; off < samplesRead; off += FRAMES_PER_PACKET) {
+            int step = (framesPerPacket > 0 && (int)framesPerPacket < samplesRead) ? (int)framesPerPacket : samplesRead;
+            for (int off = 0; off < samplesRead; off += step) {
                 int n = samplesRead - off;
-                if (n > FRAMES_PER_PACKET) n = FRAMES_PER_PACKET;
+                if (n > step) n = step;
+                bool delivered = false;
                 for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
                     if (!clients[i].streaming) continue;
                     if (clients[i].profileIndex != pi) continue;
@@ -2544,18 +2546,6 @@ void streamAudio() {
                     audioPacketsSent++;
                 }
             }
-#else
-            for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
-                if (!clients[i].streaming) continue;
-                if (clients[i].profileIndex != pi) continue;
-                sendRTPPacket(clients[i], i2s_16bit_network_buffer[pi], samplesRead);
-                if (clients[i].streaming) delivered = true;
-            }
-            if (delivered) {
-                streamStats[pi].packetsSent++;
-                audioPacketsSent++;
-            }
-#endif
             vRingbufferReturnItem(audioRingBuffer[pi], (void*)audioChunk);
             chunksProcessed++;
         }

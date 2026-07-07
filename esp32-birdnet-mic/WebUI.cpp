@@ -46,6 +46,8 @@ extern uint32_t minAcceptableRate;
 extern uint32_t performanceCheckInterval;
 extern bool autoRecoveryEnabled;
 extern uint8_t cpuFrequencyMhz;
+extern bool debugSamples;
+extern uint16_t framesPerPacket;
 extern wifi_power_t currentWifiPowerLevel;
 extern void resetToDefaultSettings();
 extern bool autoThresholdEnabled;
@@ -593,6 +595,8 @@ static void httpAudioStatus() {
     json += "\"profile\":\"" + jsonEscape(profileName(currentBufferSize)) + "\",";
     json += "\"hp_enable\":" + String(highpassEnabled?"true":"false") + ",";
     json += "\"hp_cutoff_hz\":" + String((uint32_t)highpassCutoffHz) + ",";
+    json += "\"debug_samples\":" + String(debugSamples?"true":"false") + ",";
+    json += "\"frames_per_packet\":" + String((uint32_t)framesPerPacket) + ",";
     // Metering/clipping
     uint16_t p = (peakHoldAbs16 > 0) ? peakHoldAbs16 : lastPeakAbs16;
     float peak_pct = (p <= 0) ? 0.0f : (100.0f * (float)p / 32767.0f);
@@ -998,6 +1002,16 @@ static void httpSet() {
         handled = true;
         uint32_t v;
         if (argToUInt(v) && v >= 10 && v <= 10000) { extern uint16_t highpassCutoffHz; highpassCutoffHz = (uint16_t)v; extern void updateHighpassCoeffs(); updateHighpassCoeffs(); saveAudioSettings(); applied = true; }
+    }
+    else if (key == "debug_samples") {
+        handled = true;
+        String v = web.arg("value");
+        if (v == "on" || v == "off") { debugSamples = (v == "on"); saveAudioSettings(); applied = true; }
+    }
+    else if (key == "frames_per_packet") {
+        handled = true;
+        uint32_t v;
+        if (argToUInt(v) && (v == 0 || (v >= 32 && v <= 2048))) { framesPerPacket = (uint16_t)v; saveAudioSettings(); applied = true; }
     }
     else if (key == "oh_enable") {
         handled = true;
