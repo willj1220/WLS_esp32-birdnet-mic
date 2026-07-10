@@ -18,6 +18,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "lwip/sockets.h"
+#include <errno.h>
 #include "WebUI.h"
 
 // ================== SETTINGS (ESP32 RTSP Mic for BirdNET-Go / BirdNET-Pi) ==================
@@ -85,6 +87,7 @@ bool mdnsRunning = false;
 // -- Packetization / diagnostics (WLS options, runtime-configurable via Web UI, NVS-persisted)
 bool debugSamples = false;        // log raw I2S words + shifted samples every 5 s (Web UI Logs + serial)
 uint16_t framesPerPacket = 0;     // 0 = one RTP packet per DMA chunk; >0 = fixed frames per RTP packet (e.g. 240 = 5 ms @ 48 kHz)
+bool rbFullDrain = true;          // send full coalesced BYTEBUF items; false = legacy truncate-to-bufferSize (drops tail under load, debug only)
 
 // Snapshot written by the audio producer task, formatted+logged from loop() (webui_pushLog is not thread-safe)
 volatile bool debugSampleReady = false;
@@ -113,6 +116,13 @@ struct StreamProfileConfig {
     uint8_t target = STREAM_TARGET_BIRDNET_GO;
 };
 
+// Per-client TCP transmit FIFO (PSRAM). RTP packets are framed into this and
+// pumped out with non-blocking writes so one slow socket can never stall the
+// audio pipeline or the other clients.
+static const size_t CLIENT_TX_FIFO_BYTES = 131072;   // ~1.3 s of audio per client
+static const size_t CLIENT_TX_FIFO_FALLBACK = 16384; // internal-RAM fallback if PSRAM alloc fails
+static const uint32_t CLIENT_TX_STALL_DROP_MS = 10000; // drop client after this long with no TX progress
+
 struct ClientSession {
     WiFiClient client;
     WiFiUDP udpSocket;
@@ -130,6 +140,23 @@ struct ClientSession {
     uint8_t parseBuffer[1024];
     int parseBufferPos = 0;
     unsigned long packetsSent = 0;
+    uint8_t* txBuf = nullptr;          // allocated once at boot, never freed
+    size_t txCap = 0;
+    size_t txRead = 0;                 // read offset into txBuf
+    size_t txUsed = 0;                 // bytes pending
+    unsigned long txLastProgressMs = 0;
+
+    size_t txFree() const { return txCap - txUsed; }
+
+    // Caller must check txFree() first.
+    void txPush(const uint8_t* data, size_t len) {
+        size_t w = (txRead + txUsed) % txCap;
+        size_t first = txCap - w;
+        if (first > len) first = len;
+        memcpy(txBuf + w, data, first);
+        if (len > first) memcpy(txBuf, data + first, len - first);
+        txUsed += len;
+    }
 
     void reset() {
         if (client.connected()) client.stop();
@@ -148,6 +175,9 @@ struct ClientSession {
         lastActivity = 0;
         parseBufferPos = 0;
         packetsSent = 0;
+        txRead = 0;
+        txUsed = 0;
+        txLastProgressMs = 0;
     }
 };
 
@@ -174,6 +204,7 @@ void stopRtspClientsForStream(uint8_t profileIndex, const char* reason);
 void getStreamClientCounts(uint8_t &s1, uint8_t &s2);
 uint8_t getRtspClientCount();
 String getRtspClientSummary();
+String getStreamConnectionsJson(uint8_t profileIndex);
 
 // -- RTSP Streaming
 String rtspSessionId = "";
@@ -335,6 +366,7 @@ uint32_t audioRingBufferChunkCount = 0;
 uint32_t audioRingBufferFlushCount = 0;
 uint32_t rtspWriteStallCount = 0;
 uint32_t rtspWriteTimeoutCount = 0;
+uint32_t txFifoSkipCount = 0;   // RTP packets skipped because a client's TX FIFO was full
 
 // -- MQTT (Home Assistant discovery + telemetry)
 bool mqttEnabled = false;
@@ -1843,6 +1875,7 @@ void loadAudioSettings() {
     cpuFrequencyMhz = audioPrefs.getUChar("cpuFreq", 160);
     debugSamples = audioPrefs.getBool("dbgSamp", false);
     framesPerPacket = audioPrefs.getUShort("fpp", 0);
+    rbFullDrain = audioPrefs.getBool("rbFull", true);
     wifiTxPowerDbm = audioPrefs.getFloat("wifiTxDbm", DEFAULT_WIFI_TX_DBM);
     highpassEnabled = audioPrefs.getBool("hpEnable", DEFAULT_HPF_ENABLED);
     highpassCutoffHz = (uint16_t)audioPrefs.getUInt("hpCutoff", DEFAULT_HPF_CUTOFF_HZ);
@@ -1925,6 +1958,7 @@ void saveAudioSettings() {
     audioPrefs.putUChar("cpuFreq", cpuFrequencyMhz);
     audioPrefs.putBool("dbgSamp", debugSamples);
     audioPrefs.putUShort("fpp", framesPerPacket);
+    audioPrefs.putBool("rbFull", rbFullDrain);
     audioPrefs.putFloat("wifiTxDbm", wifiTxPowerDbm);
     audioPrefs.putBool("hpEnable", highpassEnabled);
     audioPrefs.putUInt("hpCutoff", (uint32_t)highpassCutoffHz);
@@ -2036,6 +2070,7 @@ void resetToDefaultSettings() {
     cpuFrequencyMhz = 160;
     debugSamples = false;
     framesPerPacket = 0;
+    rbFullDrain = true;
     wifiTxPowerDbm = DEFAULT_WIFI_TX_DBM;
     highpassEnabled = DEFAULT_HPF_ENABLED;
     highpassCutoffHz = DEFAULT_HPF_CUTOFF_HZ;
@@ -2386,37 +2421,56 @@ bool setup_i2s_driver() {
     return true;
 }
 
-static const uint8_t RTSP_WRITE_RETRY_MAX = 8;
-static const uint32_t RTSP_WRITE_TIMEOUT_MS = 30UL;
+static void stopStreamOnWriteFailure(ClientSession &session, const char* reason);
 
-// Write helper with short retry window to tolerate brief TCP backpressure spikes.
-static bool writeAll(WiFiClient &client, const uint8_t* data, size_t len) {
-    size_t off = 0;
-    uint8_t retries = 0;
-    unsigned long startMs = millis();
-    while (off < len) {
-        if (!client.connected()) return false;
-
-        size_t chunk = len - off;
-        int avail = client.availableForWrite();
-        if (avail > 0 && (size_t)avail < chunk) {
-            chunk = (size_t)avail;
-        }
-
-        int w = client.write(data + off, chunk);
-        if (w > 0) {
-            off += (size_t)w;
-            retries = 0;
-            continue;
-        }
-
+// Non-blocking TX pump: drains a client's FIFO with MSG_DONTWAIT socket sends.
+// lwip_send writes what fits in the socket buffer and returns EWOULDBLOCK when
+// full — it can never block the loop the way WiFiClient::write's internal
+// select() does. (availableForWrite() is not implemented on this core.)
+static void pumpClientTx(ClientSession &session) {
+    if (session.transport != TRANSPORT_TCP || !session.txBuf || session.txUsed == 0) return;
+    if (!session.client.connected()) {
+        if (session.streaming) stopStreamOnWriteFailure(session, "client disconnected");
+        else session.reset();
+        return;
+    }
+    if (session.txLastProgressMs == 0) session.txLastProgressMs = millis();
+    size_t n = session.txUsed;
+    size_t contig = session.txCap - session.txRead;
+    if (n > contig) n = contig;
+    if (n > 4096) n = 4096;  // bound per-pass work so streams stay interleaved
+    int w = lwip_send(session.client.fd(), session.txBuf + session.txRead, n, MSG_DONTWAIT);
+    if (w > 0) {
+        session.txRead = (session.txRead + (size_t)w) % session.txCap;
+        session.txUsed -= (size_t)w;
+        session.txLastProgressMs = millis();
+    } else if (w < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
         rtspWriteStallCount++;
-        if ((millis() - startMs) > RTSP_WRITE_TIMEOUT_MS || retries >= RTSP_WRITE_RETRY_MAX) {
+        if ((millis() - session.txLastProgressMs) > CLIENT_TX_STALL_DROP_MS) {
             rtspWriteTimeoutCount++;
-            return false;
+            stopStreamOnWriteFailure(session, "TX stalled");
         }
-        retries++;
-        delay(1);
+    } else {
+        rtspWriteTimeoutCount++;
+        stopStreamOnWriteFailure(session, "TX socket error");
+    }
+}
+
+static void pumpAllClientTx() {
+    for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
+        pumpClientTx(clients[i]);
+    }
+}
+
+// Blocking flush for the rare direct socket writes (RTSP control responses)
+// so they never land mid-RTP-frame. Returns false if the FIFO can't drain.
+static bool flushClientTx(ClientSession &session, uint32_t timeoutMs) {
+    unsigned long startMs = millis();
+    while (session.txUsed > 0) {
+        if (!session.client.connected()) return false;
+        if ((millis() - startMs) > timeoutMs) return false;
+        pumpClientTx(session);
+        if (session.txUsed > 0) delay(1);
     }
     return true;
 }
@@ -2462,19 +2516,22 @@ void sendRTPPacket(ClientSession &session, const int16_t* networkAudioData, int 
             session.streaming = false;
             return;
         }
+        if (!session.txBuf || session.txFree() < (size_t)(4 + packetSize)) {
+            // FIFO full: skip this packet for this client only. Advance the
+            // media clock so the receiver sees a timestamp gap, not drift.
+            txFifoSkipCount++;
+            session.rtpTimestamp += (uint32_t)numSamples;
+            return;
+        }
         uint8_t inter[4];
         inter[0] = 0x24;
         inter[1] = 0x00;
         inter[2] = (uint8_t)((packetSize >> 8) & 0xFF);
         inter[3] = (uint8_t)(packetSize & 0xFF);
-        if (writeAll(session.client, inter, sizeof(inter)) &&
-            writeAll(session.client, header, sizeof(header)) &&
-            writeAll(session.client, (const uint8_t*)networkAudioData, payloadSize)) {
-            success = true;
-        } else {
-            stopStreamOnWriteFailure(session, "RTP write failed");
-            return;
-        }
+        session.txPush(inter, sizeof(inter));
+        session.txPush(header, sizeof(header));
+        session.txPush((const uint8_t*)networkAudioData, payloadSize);
+        success = true;
     } else {
         if (session.clientRtpPort == 0) {
             session.streaming = false;
@@ -2525,33 +2582,41 @@ void streamAudio() {
 
         uint8_t chunksProcessed = 0;
         while (chunksProcessed < 4) {
+            pumpAllClientTx();
             size_t itemSize = 0;
             int16_t* audioChunk = (int16_t*)xRingbufferReceive(audioRingBuffer[pi], &itemSize, 0);
             if (!audioChunk) break;
 
-            int samplesRead = itemSize / sizeof(int16_t);
-            if (samplesRead > currentBufferSize) samplesRead = currentBufferSize;
+            // BYTEBUF rings coalesce chunks: one item can hold several DMA
+            // chunks' worth of audio. Send all of it in bufferSize slices —
+            // truncating here silently drops the tail.
+            int samplesTotal = itemSize / sizeof(int16_t);
+            if (!rbFullDrain && samplesTotal > currentBufferSize) samplesTotal = currentBufferSize;  // legacy truncate mode
+            for (int base = 0; base < samplesTotal; base += currentBufferSize) {
+                int samplesRead = samplesTotal - base;
+                if (samplesRead > currentBufferSize) samplesRead = currentBufferSize;
 
-            // Network-order copy, reused for all clients on this stream.
-            for (int i = 0; i < samplesRead; ++i) {
-                uint16_t s = (uint16_t)audioChunk[i];
-                s = (uint16_t)((s << 8) | (s >> 8));
-                i2s_16bit_network_buffer[pi][i] = (int16_t)s;
-            }
-            int step = (framesPerPacket > 0 && (int)framesPerPacket < samplesRead) ? (int)framesPerPacket : samplesRead;
-            for (int off = 0; off < samplesRead; off += step) {
-                int n = samplesRead - off;
-                if (n > step) n = step;
-                bool delivered = false;
-                for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
-                    if (!clients[i].streaming) continue;
-                    if (clients[i].profileIndex != pi) continue;
-                    sendRTPPacket(clients[i], &i2s_16bit_network_buffer[pi][off], n);
-                    if (clients[i].streaming) delivered = true;
+                // Network-order copy, reused for all clients on this stream.
+                for (int i = 0; i < samplesRead; ++i) {
+                    uint16_t s = (uint16_t)audioChunk[base + i];
+                    s = (uint16_t)((s << 8) | (s >> 8));
+                    i2s_16bit_network_buffer[pi][i] = (int16_t)s;
                 }
-                if (delivered) {
-                    streamStats[pi].packetsSent++;
-                    audioPacketsSent++;
+                int step = (framesPerPacket > 0 && (int)framesPerPacket < samplesRead) ? (int)framesPerPacket : samplesRead;
+                for (int off = 0; off < samplesRead; off += step) {
+                    int n = samplesRead - off;
+                    if (n > step) n = step;
+                    bool delivered = false;
+                    for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
+                        if (!clients[i].streaming) continue;
+                        if (clients[i].profileIndex != pi) continue;
+                        sendRTPPacket(clients[i], &i2s_16bit_network_buffer[pi][off], n);
+                        if (clients[i].streaming) delivered = true;
+                    }
+                    if (delivered) {
+                        streamStats[pi].packetsSent++;
+                        audioPacketsSent++;
+                    }
                 }
             }
             vRingbufferReturnItem(audioRingBuffer[pi], (void*)audioChunk);
@@ -2576,28 +2641,37 @@ static bool anyRtspSessionStreaming(uint8_t profileIndex = 255) {
 }
 
 static void parseTransportHeader(ClientSession &session, const String &request, String &transportResponse, uint8_t clientIdx) {
-    // Auto-select transport based on target: BirdNET-Go=TCP, BirdNET-Pi=UDP
-    bool forceTcp = (streamProfiles[session.profileIndex].target == STREAM_TARGET_BIRDNET_GO);
-    bool forceUdp = !forceTcp;
+    // Honor the client's requested transport; the per-stream Target setting is
+    // only the fallback when the request doesn't state one.
+    String transportLine = "";
+    int transportPos = request.indexOf("Transport:");
+    if (transportPos >= 0) {
+        transportLine = request.substring(transportPos);
+        int endPos = transportLine.indexOf("\r\n");
+        if (endPos > 0) transportLine = transportLine.substring(0, endPos);
+        transportLine.toLowerCase();
+    }
 
-    if (forceUdp) {
+    bool useUdp;
+    if (transportLine.indexOf("rtp/avp/tcp") >= 0 || transportLine.indexOf("interleaved") >= 0) {
+        useUdp = false;
+    } else if (transportLine.indexOf("client_port=") >= 0) {
+        useUdp = true;
+    } else {
+        useUdp = (streamProfiles[session.profileIndex].target == STREAM_TARGET_BIRDNET_PI);
+    }
+
+    if (useUdp) {
         session.transport = TRANSPORT_UDP;
-        int transportPos = request.indexOf("Transport:");
-        if (transportPos >= 0) {
-            String transportLine = request.substring(transportPos);
-            int endPos = transportLine.indexOf("\r\n");
-            if (endPos > 0) transportLine = transportLine.substring(0, endPos);
-            transportLine.toLowerCase();
-            int clientPortPos = transportLine.indexOf("client_port=");
-            if (clientPortPos >= 0) {
-                String portStr = transportLine.substring(clientPortPos + 12);
-                int dashPos = portStr.indexOf("-");
-                if (dashPos > 0) portStr = portStr.substring(0, dashPos);
-                int semiPos = portStr.indexOf(";");
-                if (semiPos > 0) portStr = portStr.substring(0, semiPos);
-                portStr.trim();
-                session.clientRtpPort = (uint16_t)portStr.toInt();
-            }
+        int clientPortPos = transportLine.indexOf("client_port=");
+        if (clientPortPos >= 0) {
+            String portStr = transportLine.substring(clientPortPos + 12);
+            int dashPos = portStr.indexOf("-");
+            if (dashPos > 0) portStr = portStr.substring(0, dashPos);
+            int semiPos = portStr.indexOf(";");
+            if (semiPos > 0) portStr = portStr.substring(0, semiPos);
+            portStr.trim();
+            session.clientRtpPort = (uint16_t)portStr.toInt();
         }
         if (session.client.connected()) session.clientRtpAddress = session.client.remoteIP();
         session.serverRtpPort = (uint16_t)(5004 + (clientIdx * 2));
@@ -2617,6 +2691,14 @@ static void parseTransportHeader(ClientSession &session, const String &request, 
 
 // RTSP handling
 void handleRTSPCommand(ClientSession &session, String request, uint8_t clientIdx) {
+    // Control responses write directly to the socket; drain any queued RTP
+    // first so the response can't land mid-frame.
+    if (session.transport == TRANSPORT_TCP && session.txUsed > 0) {
+        if (!flushClientTx(session, 500)) {
+            stopStreamOnWriteFailure(session, "TX flush failed before RTSP response");
+            return;
+        }
+    }
     String cseq = "1";
     int cseqPos = request.indexOf("CSeq: ");
     if (cseqPos >= 0) {
@@ -2708,7 +2790,9 @@ void handleRTSPCommand(ClientSession &session, String request, uint8_t clientIdx
         lastRtpPacketMs = millis();
         lastStreamStopReason = "none";
         lastStreamStopMs = 0;
-        simplePrintln("STREAMING STARTED stream" + String(session.profileIndex + 1));
+        simplePrintln("STREAMING STARTED stream" + String(session.profileIndex + 1) + " to " +
+                      session.client.remoteIP().toString() + " via " +
+                      String(session.transport == TRANSPORT_UDP ? "UDP" : "TCP"));
         mqttPublishState(true);
 
     } else if (request.startsWith("TEARDOWN")) {
@@ -2814,6 +2898,31 @@ String getRtspClientSummary() {
     return summary;
 }
 
+String getStreamConnectionsJson(uint8_t profileIndex) {
+    String json = "[";
+    bool first = true;
+    for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
+        if (!clients[i].client.connected()) continue;
+        if (clients[i].profileIndex != profileIndex) continue;
+        if (!first) json += ",";
+        first = false;
+        json += "{\"ip\":\"" + clients[i].client.remoteIP().toString() + "\"";
+        json += ",\"transport\":\"" + String(clients[i].transport == TRANSPORT_UDP ? "UDP" : "TCP") + "\"";
+        if (clients[i].transport == TRANSPORT_UDP) {
+            json += ",\"rtp_port\":" + String(clients[i].clientRtpPort);
+            json += ",\"server_port\":" + String(clients[i].serverRtpPort);
+        }
+        json += ",\"streaming\":" + String(clients[i].streaming ? "true" : "false");
+        json += ",\"pkts\":" + String(clients[i].packetsSent);
+        if (clients[i].transport == TRANSPORT_TCP) {
+            json += ",\"tx_pend\":" + String((uint32_t)clients[i].txUsed);
+        }
+        json += "}";
+    }
+    json += "]";
+    return json;
+}
+
 void stopRtspClientsForStream(uint8_t profileIndex, const char* reason) {
     if (profileIndex >= 2) return;
     bool hadStreaming = false;
@@ -2905,6 +3014,21 @@ void setup() {
         simplePrintln("FATAL: Memory allocation failed!");
         ESP.restart();
     }
+
+    // Per-client TCP TX FIFOs in PSRAM (internal-RAM fallback keeps streaming
+    // functional, just with a smaller cushion).
+    for (uint8_t i = 0; i < MAX_CLIENTS; i++) {
+        if (psramFound()) {
+            clients[i].txBuf = (uint8_t*)ps_malloc(CLIENT_TX_FIFO_BYTES);
+            clients[i].txCap = clients[i].txBuf ? CLIENT_TX_FIFO_BYTES : 0;
+        }
+        if (!clients[i].txBuf) {
+            clients[i].txBuf = (uint8_t*)malloc(CLIENT_TX_FIFO_FALLBACK);
+            clients[i].txCap = clients[i].txBuf ? CLIENT_TX_FIFO_FALLBACK : 0;
+        }
+    }
+    simplePrintln("Client TX FIFOs: " + String((uint32_t)clients[0].txCap / 1024) + " KB x " + String(MAX_CLIENTS) +
+                  (psramFound() ? " (PSRAM)" : " (internal)"));
 
     // WiFi optimization for stable streaming
     WiFi.setSleep(false);
@@ -3107,6 +3231,7 @@ void loop() {
             }
         }
         streamAudio();
+        pumpAllClientTx();
     } else {
         stopAllRtspClients("RTSP server disabled");
     }

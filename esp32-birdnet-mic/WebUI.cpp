@@ -47,6 +47,7 @@ extern uint32_t performanceCheckInterval;
 extern bool autoRecoveryEnabled;
 extern uint8_t cpuFrequencyMhz;
 extern bool debugSamples;
+extern bool rbFullDrain;
 extern uint16_t framesPerPacket;
 extern wifi_power_t currentWifiPowerLevel;
 extern void resetToDefaultSettings();
@@ -78,6 +79,7 @@ extern uint8_t maxActiveClients;
 struct StreamStats { uint8_t clientCount; bool streaming; uint32_t packetsSent; unsigned long statsResetMs; unsigned long lastConnectMs; unsigned long lastPlayMs; };
 extern StreamStats streamStats[2];
 extern void getStreamClientCounts(uint8_t &s1, uint8_t &s2);
+extern String getStreamConnectionsJson(uint8_t profileIndex);
 extern String getRtspClientSummary();
 extern void stopAllRtspClients(const char* reason);
 
@@ -510,7 +512,7 @@ static void httpStatus() {
     unsigned long runtime = millis() - lastStatsReset;
     uint32_t currentRate = (isStreaming && runtime > 1000) ? (audioPacketsSent * 1000) / runtime : 0;
     String json = "{";
-    json.reserve(1800);
+    json.reserve(2400);
     json += "\"fw_version\":\"" + String(FW_VERSION_STR) + "\",";
     json += "\"board_id\":\"" + jsonEscape(String(FW_BOARD_ID_STR)) + "\",";
     json += "\"board_name\":\"" + jsonEscape(String(FW_BOARD_NAME_STR)) + "\",";
@@ -539,6 +541,8 @@ static void httpStatus() {
     json += "\"s2_streaming\":" + String(streamStats[1].streaming?"true":"false") + ",";
     json += "\"s2_pkt_rate\":" + String((streamStats[1].streaming && (nowMs - streamStats[1].statsResetMs) > 1000) ? (streamStats[1].packetsSent * 1000) / (nowMs - streamStats[1].statsResetMs) : 0) + ",";
     json += "\"s2_last_play\":\"" + jsonEscape(formatSince(streamStats[1].lastPlayMs)) + "\",";
+    json += "\"s1_conns\":" + getStreamConnectionsJson(0) + ",";
+    json += "\"s2_conns\":" + getStreamConnectionsJson(1) + ",";
     json += "\"mdns_hostname\":\"" + jsonEscape(mdnsHostname) + "\",";
     json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
     json += "\"wifi_tx_dbm\":" + String(wifiPowerLevelToDbm(currentWifiPowerLevel),1) + ",";
@@ -596,6 +600,7 @@ static void httpAudioStatus() {
     json += "\"hp_enable\":" + String(highpassEnabled?"true":"false") + ",";
     json += "\"hp_cutoff_hz\":" + String((uint32_t)highpassCutoffHz) + ",";
     json += "\"debug_samples\":" + String(debugSamples?"true":"false") + ",";
+    json += "\"rb_full_drain\":" + String(rbFullDrain?"true":"false") + ",";
     json += "\"frames_per_packet\":" + String((uint32_t)framesPerPacket) + ",";
     // Metering/clipping
     uint16_t p = (peakHoldAbs16 > 0) ? peakHoldAbs16 : lastPeakAbs16;
@@ -612,7 +617,9 @@ static void httpAudioStatus() {
     json += "\"rb_drops\":" + String(audioRingBufferDropCount) + ",";
     json += "\"rb_flushes\":" + String(audioRingBufferFlushCount) + ",";
     json += "\"rtsp_write_stalls\":" + String(rtspWriteStallCount) + ",";
-    json += "\"rtsp_write_timeouts\":" + String(rtspWriteTimeoutCount);
+    json += "\"rtsp_write_timeouts\":" + String(rtspWriteTimeoutCount) + ",";
+    extern uint32_t txFifoSkipCount;
+    json += "\"tx_skips\":" + String(txFifoSkipCount);
     json += "}";
     apiSendJSON(json);
 }
@@ -1007,6 +1014,11 @@ static void httpSet() {
         handled = true;
         String v = web.arg("value");
         if (v == "on" || v == "off") { debugSamples = (v == "on"); saveAudioSettings(); applied = true; }
+    }
+    else if (key == "rb_full_drain") {
+        handled = true;
+        String v = web.arg("value");
+        if (v == "on" || v == "off") { rbFullDrain = (v == "on"); saveAudioSettings(); applied = true; }
     }
     else if (key == "frames_per_packet") {
         handled = true;
